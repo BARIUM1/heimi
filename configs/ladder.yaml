@@ -1,0 +1,78 @@
+# 黑米阶梯（spec 8.1）：stage0 从零 → stage1 加深 → stage2 加宽 → task 代码补全。
+# 注意：科学计数法必须带小数点（2.0e-3），2e-3 会被 YAML 读成字符串。
+seed: 1337
+seq_len: 1024
+tokens_per_step: 524288      # 512 条 × 1024
+log_interval: 10
+ckpt_interval: 500
+keep_checkpoints: 2
+compile: false               # 本机 Windows 没有 Triton，开了也会回退
+max_mem_frac: 0.8            # reserved 显存超过物理显存的这个比例就判定溢出到系统内存
+
+data:
+  index: data/tokens/index.json
+  tokenizer: data/tokenizer/heimi-16k.json
+  hellaswag: data/eval/hellaswag_val.parquet
+
+eval:
+  interval: 500
+  val_windows: 200
+  hellaswag: true
+  fim_em_samples: 1000
+  sample_interval: 500
+  sample_tokens: 64
+
+model:                       # 各级共用；每级的 model 在其上覆盖
+  vocab_size: 16384
+  seq_len: 1024
+
+prompts:
+  - id: en_history
+    prefix: "The history of the Roman Empire began when"
+  - id: en_science
+    prefix: "Water boils at a lower temperature on a mountain because"
+  - id: en_story
+    prefix: "Once upon a time, a small black cat named Heimi"
+  - id: py_func
+    prefix: "def fibonacci(n):\n    \"\"\"Return the n-th Fibonacci number.\"\"\"\n"
+  - id: sh_find
+    prefix: "# list all python files modified in the last day\nfind . -name"
+  - id: fim_py
+    prefix: "def is_even(n):\n    "
+    suffix: "\n\nprint(is_even(4))\n"
+
+stages:
+  - name: stage0
+    growth: none
+    model: {n_layer: 8, d_model: 384, n_head: 6, kv_lora_rank: 128, ffn_hidden: 1024}
+    tokens: 300000000
+    lr: 2.0e-3
+    warmup_frac: 0.02
+    micro_batch: 16
+    mix: {web: 0.85, code: 0.15, fim_rate: 0.0}
+  - name: stage1
+    growth: depth
+    model: {n_layer: 16, d_model: 384, n_head: 6, kv_lora_rank: 128, ffn_hidden: 1024}
+    tokens: 500000000
+    lr: 1.5e-3
+    warmup_frac: 0.05
+    micro_batch: 16
+    mix: {web: 0.85, code: 0.15, fim_rate: 0.0}
+  - name: stage2
+    growth: width
+    model: {n_layer: 16, d_model: 768, n_head: 12, kv_lora_rank: 256, ffn_hidden: 2048}
+    tokens: 2000000000
+    lr: 6.0e-4
+    warmup_frac: 0.05
+    micro_batch: 8
+    mix: {web: 0.85, code: 0.15, fim_rate: 0.0}
+    noise_std_rel: 1.0e-3    # 加宽后对称破缺噪声（spec 7.2），进入 stage2 验证失败时在此调整
+    rel_tol: 1.0e-2          # 加噪后允许的最大相对误差（spec 7.3）
+  - name: task
+    growth: none
+    model: {n_layer: 16, d_model: 768, n_head: 12, kv_lora_rank: 256, ffn_hidden: 2048}
+    tokens: 700000000
+    lr: 2.0e-4
+    warmup_frac: 0.05
+    micro_batch: 8
+    mix: {web: 0.20, code: 0.80, fim_rate: 0.5}
