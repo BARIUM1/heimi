@@ -227,7 +227,7 @@ button.ghost { background: transparent; color: var(--accent); padding: 5px 12px;
   main { padding: 0 0 48px; }
   .sheet, #empty { border-left: 0; border-right: 0; border-radius: 0; }
   .sheet > *, .top-grid > section { padding: 22px 16px; }
-  .top-grid { grid-template-columns: minmax(0, 1fr); }
+  .sheet > .top-grid { padding: 0; grid-template-columns: minmax(0, 1fr); }
   .top-grid > section + section { border-left: 0; border-top: 1px solid var(--hairline); }
   .lede { font-size: 20px; }
   .chart-box.tall { height: 300px; }
@@ -243,8 +243,9 @@ button.ghost { background: transparent; color: var(--accent); padding: 5px 12px;
     <span class="wordmark-latin">Heimi 训练窗口</span>
   </div>
   <div class="top-controls">
-    <label for="run-select">查看哪一次训练</label>
+    <label id="run-label" for="run-select">查看哪一次训练</label>
     <select id="run-select"></select>
+    <button id="active-run" class="ghost" type="button" hidden></button>
     <span id="conn" role="status"></span>
   </div>
 </header>
@@ -376,6 +377,14 @@ function fmtCount(n) {
   return String(Math.round(n));
 }
 const fmtParams = (n) => (n == null ? "—" : n >= 1e6 ? Math.round(n / 1e6) + "M" : Math.round(n / 1e3) + "K");
+// 坐标轴刻度：一条轴只用一种单位，由轴的最大值决定
+function fmtAxis(v, max) {
+  if (v === 0) return "0";
+  if (max >= 1e8) return trimZeros((v / 1e9).toFixed(2)) + "B";
+  if (max >= 1e6) return trimZeros((v / 1e6).toFixed(1)) + "M";
+  if (max >= 1e3) return trimZeros((v / 1e3).toFixed(1)) + "K";
+  return String(v);
+}
 const fmtFixed = (x, d) => (x == null ? "—" : Number(x).toFixed(d));
 const fmtPct = (x) => (x == null ? "—" : (x * 100).toFixed(1) + "%");
 function fmtDuration(s) {
@@ -417,7 +426,9 @@ async function refresh() {
   }
   if (!state.run || !state.runs.some((r) => r.name === state.run)) state.run = pickRun(state.runs);
   const run = state.run;
-  const jobs = [getJSON("/api/status").then((s) => { state.status = s; })];
+  // 状态栏跟着正在看的这次训练走；后台另外告诉我们现在在训练的是哪一个
+  const statusUrl = run ? "/api/status?run=" + encodeURIComponent(run) : "/api/status";
+  const jobs = [getJSON(statusUrl).then((s) => { state.status = s; })];
   if (run) {
     const base = `/api/runs/${encodeURIComponent(run)}`;
     const have = state.metrics.get(run) || [];
@@ -446,8 +457,11 @@ function render() {
   const empty = state.runs.length === 0;
   $("empty").hidden = !empty;
   $("content").hidden = empty;
+  $("run-label").hidden = empty;  // 没有训练可选时不摆一个空的下拉框
+  $("run-select").hidden = empty;
   if (empty) return;
   renderRunSelect();
+  renderActiveHint();
   renderLede();
   renderLegend();
   renderCharts();
@@ -468,13 +482,28 @@ function renderRunSelect() {
   }
   select.value = state.run;
 }
-$("run-select").addEventListener("change", (e) => {
-  state.run = e.target.value;
+function switchRun(name) {
+  state.run = name;
   state.samples = [];
+  state.status = null;
   clearHover();
   render();
   refresh();
-});
+}
+$("run-select").addEventListener("change", (e) => switchRun(e.target.value));
+
+// 正在看的不是正在训练的那一次时，给一个一键切过去的入口
+function renderActiveHint() {
+  const s = state.status;
+  const button = $("active-run");
+  const other = s && s.active_run && s.active_run !== state.run && s.active_state === "running" ? s.active_run : null;
+  button.hidden = !other;
+  if (other) {
+    button.textContent = `${other} 正在训练，去看它`;
+    button.dataset.run = other;
+  }
+}
+$("active-run").addEventListener("click", (e) => switchRun(e.currentTarget.dataset.run));
 
 function currentRun() {
   return state.runs.find((r) => r.name === state.run) || null;
@@ -483,13 +512,13 @@ function currentRun() {
 function renderLede() {
   const r = currentRun();
   if (!r) return;
-  const who = r.name === "heimi" ? "黑米" : r.name;
+  const who = r.name === "heimi" ? "黑米" : r.name + " ";  // 中文名后面不空格，英文 run 名后面空一格
   const stage = r.stages.find((s) => s.name === r.stage);
   let text;
   if (!stage || stage.params == null) {
-    text = `${who} 还没有开始训练。`;
+    text = `${who}还没有开始训练。`;
   } else {
-    text = `${who} 现在有 ${fmtParams(stage.params)} 个参数，读过 ${fmtCount(r.tokens_total)} 个 token，正处在 ${r.stage} 阶段。`;
+    text = `${who}现在有 ${fmtParams(stage.params)} 个参数，读过 ${fmtCount(r.tokens_total)} 个 token，正处在 ${r.stage} 阶段。`;
   }
   $("lede").textContent = text;
 }
@@ -632,7 +661,8 @@ function chartOptions(t, topPad, yTick, xTitle) {
         type: "linear", min: 0,
         border: { color: t.axis },
         grid: { color: t.grid, drawTicks: false },
-        ticks: { color: t.muted, padding: 6, maxTicksLimit: 8, callback: (v) => fmtCount(v), font: { size: 12 } },
+        // includeBounds 关掉：轴的最大值不是整数，不单独给它一个刻度
+        ticks: { color: t.muted, padding: 6, maxTicksLimit: 8, includeBounds: false, callback: function (v) { return fmtAxis(v, this.max); }, font: { size: 12 } },
         title: { display: Boolean(xTitle), text: xTitle || "", color: t.muted, font: { size: 12 } },
       },
       y: {

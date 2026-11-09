@@ -102,7 +102,7 @@ python train.py --config configs/ladder.yaml --run heimi --device cuda
 每级结束还有级末评测（级 2 与任务阶段预计 15 到 20 分钟）。对照组：
 
 ```
-python train.py --config configs/baseline105m.yaml --run baseline --device cuda
+python train.py --config configs/baseline105m.yaml --run baseline105m --device cuda
 ```
 
 检查点占用：级 1 每个约 460 MB，级 2 / 任务 / 对照每个约 1.5 GB，每级最多 2 个中间加 1 个最终，总计约 15 GB；F 盘目前剩 241 GB。

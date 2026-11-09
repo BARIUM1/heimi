@@ -45,3 +45,7 @@ def test_page_polls_every_five_seconds_and_uses_every_endpoint():
     assert "5000" in html
     for path in ("/api/runs", "/api/status", "/overview", "/metrics?since=", "/samples", "/api/generate"):
         assert path in html, path
+
+
+def test_status_panel_follows_the_run_being_viewed():
+    assert "/api/status?run=" in _html()

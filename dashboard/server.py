@@ -79,8 +79,8 @@ def create_app(runs_dir: Path, worker=None, repo_root: Path | None = None) -> Fa
         return data.overview(data.safe_run_dir(runs_dir, run))
 
     @app.get("/api/status")
-    def api_status() -> dict:
-        return data.status(runs_dir)
+    def api_status(run: str | None = None) -> dict:
+        return data.status(runs_dir, run=run)  # 页面带上正在看的 run；不带则报最近更新的那个
 
     @app.post("/api/generate")
     def api_generate(body: GenerateRequest) -> dict:

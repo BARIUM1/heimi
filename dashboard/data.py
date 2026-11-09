@@ -231,28 +231,46 @@ def eta_seconds(metrics: list[dict], events: list[dict]) -> float | None:
     return (steps - step) * tokens_per_step / median(recent)
 
 
-def status(runs_dir: Path, now: datetime | None = None) -> dict:
-    """最近更新的那个 run 的当前状态；没有任何 run 时各数值为 None。"""
+def _newest_run(runs_dir: Path) -> tuple[datetime, Path] | None:
+    """最近写过日志的那个 run：它就是"现在在训练的"候选。"""
+    runs_dir = Path(runs_dir)
+    if not runs_dir.is_dir():
+        return None
+    best: tuple[datetime, Path] | None = None
+    for d in runs_dir.iterdir():
+        if d.is_dir() and RUN_NAME_RE.match(d.name):
+            t = last_update(d)
+            if t is not None and (best is None or t.timestamp() > best[0].timestamp()):
+                best = (t, d)
+    return best
+
+
+def status(runs_dir: Path, now: datetime | None = None, run: str | None = None) -> dict:
+    """某个 run 的当前状态：给了 run 就报它（页面正在看的那个），否则报最近更新的。
+
+    无论报哪个，active_run / active_state 都指最近更新的那个，页面据此提示"现在在训练的是谁"。
+    没有任何 run 时各数值为 None。
+    """
     now = now or datetime.now().astimezone()
     out: dict = {
         "run": None, "state": "stopped", "running": False,
         "stage": None, "step": None, "steps": None, "global_step": None, "tokens_total": None,
         "loss": None, "lr": None, "tok_per_s": None, "mem_gb": None, "gpu_temp_c": None,
         "eta_seconds": None, "last_update": None, "seconds_since_update": None, "last_eval": None,
+        "active_run": None, "active_state": "stopped",
         "gpu": gpu_status(),
     }
-    runs_dir = Path(runs_dir)
-    if not runs_dir.is_dir():
+    newest = _newest_run(runs_dir)
+    if newest is not None:
+        out["active_run"] = newest[1].name
+        out["active_state"] = training_state(newest[0], now)
+    if run is not None:
+        run_dir = safe_run_dir(Path(runs_dir), run)
+        updated = last_update(run_dir)
+    elif newest is not None:
+        updated, run_dir = newest
+    else:
         return out
-    candidates = []
-    for d in runs_dir.iterdir():
-        if d.is_dir() and RUN_NAME_RE.match(d.name):
-            t = last_update(d)
-            if t is not None:
-                candidates.append((t.timestamp(), t, d))
-    if not candidates:
-        return out
-    _, updated, run_dir = max(candidates, key=lambda c: c[0])
 
     metrics = read_jsonl(run_dir / METRICS_FILE)
     events = read_jsonl(run_dir / EVENTS_FILE)
@@ -261,8 +279,8 @@ def status(runs_dir: Path, now: datetime | None = None) -> dict:
     state = training_state(updated, now)
     out.update({
         "run": run_dir.name, "state": state, "running": state == "running",
-        "last_update": updated.isoformat(timespec="seconds"),
-        "seconds_since_update": (now - updated).total_seconds(),
+        "last_update": updated.isoformat(timespec="seconds") if updated else None,
+        "seconds_since_update": (now - updated).total_seconds() if updated else None,
         "last_eval": evals[-1] if evals else None,
         "eta_seconds": eta_seconds(metrics, events),
     })

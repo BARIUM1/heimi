@@ -80,3 +80,10 @@ def test_worker_is_closed_on_shutdown(dash_runs):
     with TestClient(create_app(dash_runs[0], worker=worker)):
         pass
     assert worker.closed
+
+
+def test_status_for_a_named_run_and_404_for_a_bad_name(client):
+    s = client.get("/api/status", params={"run": "heimi"}).json()
+    assert s["run"] == "heimi" and s["active_run"] == "heimi"
+    assert client.get("/api/status", params={"run": ".."}).status_code == 404
+    assert client.get("/api/status", params={"run": "nope"}).status_code == 404

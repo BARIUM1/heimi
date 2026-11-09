@@ -2,7 +2,7 @@
 
     python train.py --config configs/ladder.yaml --run heimi            # 按顺序跑完全部阶段，有检查点自动续训
     python train.py --config configs/ladder.yaml --run heimi --stage stage0
-    python train.py --config configs/baseline105m.yaml --run baseline
+    python train.py --config configs/baseline105m.yaml --run baseline105m
     python train.py --config configs/tiny_smoke.yaml --run smoke --max-steps 12   # 试跑 12 步后保存检查点退出
 
 日志与检查点写到 <runs-dir>/<run>/。训练期间阻止系统待机。中止（NaN、显存不足）返回码 3。

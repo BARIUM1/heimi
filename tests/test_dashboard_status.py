@@ -58,3 +58,19 @@ def test_status_with_no_runs(tmp_path, monkeypatch):
     s = status(tmp_path / "missing")
     assert s["run"] is None and s["state"] == "stopped" and s["running"] is False
     assert s["gpu"] is None and s["eta_seconds"] is None and s["stage"] is None and s["last_eval"] is None
+
+
+def test_status_can_follow_a_chosen_run_and_still_names_the_active_one(tmp_path, monkeypatch):
+    # 页面正在看 old 这次训练时，状态栏报的应该是 old，而不是别的更晚动过的 run；同时告诉页面谁正在训练
+    monkeypatch.setattr(data, "gpu_status", lambda: None)
+    old, new = RunLogger(tmp_path / "old"), RunLogger(tmp_path / "heimi")
+    old.metrics(_metric("s0", 10, 500.0, T0 - timedelta(hours=5)))
+    new.metrics(_metric("stage1", 7, 1000.0, T0))
+    now = T0 + timedelta(seconds=30)
+    s = status(tmp_path, now=now, run="old")
+    assert (s["run"], s["state"], s["step"]) == ("old", "stopped", 10)
+    assert (s["active_run"], s["active_state"]) == ("heimi", "running")
+    default = status(tmp_path, now=now)
+    assert (default["run"], default["active_run"]) == ("heimi", "heimi")
+    with pytest.raises(data.RunNotFound):
+        status(tmp_path, now=now, run="..")
