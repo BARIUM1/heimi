@@ -50,11 +50,12 @@ def test_mix_ratio_converges(tmp_path):
 
 
 def test_fim_applied_only_to_code(tmp_path):
-    ld = MixedLoader(_two_sets(tmp_path, 17), MixConfig(web=0.0, code=1.0, fim_rate=1.0), 8, 16, seed=0, vocab_size=200)
+    ld = MixedLoader(_two_sets(tmp_path / "a", 17), MixConfig(web=0.0, code=1.0, fim_rate=1.0), 8, 16, seed=0, vocab_size=200)
     x, y = ld.get_batch(0)
     full = torch.cat([x[:, :1], y], dim=1)  # 还原 seq_len + 1 的序列
     assert (full[:, 0] == 1).all() and (full[:, -1] == 0).all()
-    ld2 = MixedLoader(_two_sets(tmp_path, 17), MixConfig(web=1.0, code=0.0, fim_rate=1.0), 8, 16, seed=0, vocab_size=200)
+    # Windows 不允许覆盖写一个仍被 memmap 打开的文件，所以第二组分片放在另一个目录
+    ld2 = MixedLoader(_two_sets(tmp_path / "b", 17), MixConfig(web=1.0, code=0.0, fim_rate=1.0), 8, 16, seed=0, vocab_size=200)
     x2, _ = ld2.get_batch(0)
     assert (x2[:, 0] != 1).all()
 

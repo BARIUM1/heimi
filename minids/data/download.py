@@ -14,6 +14,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from minids.data.sources import SOURCES, Source, local_path, raw_dir
+from minids.keepawake import keep_awake
 
 log = logging.getLogger(__name__)
 
@@ -93,11 +94,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     names = ["web", "code"] if args.source == "all" else [args.source]
     total = 0
-    for name in names:
-        files = download_source(SOURCES[name], Path(args.root))
-        size = sum(f.stat().st_size for f in files)
-        total += size
-        log.info("%s：%d 个文件，%.2f GB，目录 %s", name, len(files), size / 1e9, raw_dir(Path(args.root), SOURCES[name]))
+    with keep_awake():
+        for name in names:
+            files = download_source(SOURCES[name], Path(args.root))
+            size = sum(f.stat().st_size for f in files)
+            total += size
+            log.info("%s：%d 个文件，%.2f GB，目录 %s", name, len(files), size / 1e9, raw_dir(Path(args.root), SOURCES[name]))
     log.info("合计 %.2f GB", total / 1e9)
     return 0
 
