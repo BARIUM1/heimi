@@ -5,7 +5,7 @@
 docs/benchmarks/throughput.jsonl。用于修正 spec 8.1 的时间预算和选微批次。
 
 用法：
-  python scripts/bench_throughput.py --stage 2 --micro-batch 16 [--compile] [--steps 30]
+  python scripts/bench_throughput.py --stage 2 --micro-batch 8 [--compile] [--steps 30]
 """
 
 import argparse
@@ -20,6 +20,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from minids.config import ModelConfig  # noqa: E402
+from minids.memguard import cuda_memory_snapshot, exceeds_memory_budget  # noqa: E402
 from minids.model.transformer import Transformer  # noqa: E402
 
 STAGES = {
@@ -40,11 +41,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--max-mem-frac",
         type=float,
-        default=0.9,
-        help="峰值显存超过物理显存的这个比例就判定为溢出到系统内存（Windows 不会报 OOM，只会变得极慢）",
+        default=0.8,
+        help="峰值 reserved 显存超过物理显存的这个比例就判定为溢出到系统内存"
+        "（Windows 不会报 OOM，只会变得极慢；allocated 会低估，所以看 reserved）",
     )
     p.add_argument("--out", default="docs/benchmarks/throughput.jsonl")
     return p.parse_args()
+
+
+def _make_model_and_opt(cfg: ModelConfig, device: torch.device):
+    torch.manual_seed(0)
+    model = Transformer(cfg).to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, betas=(0.9, 0.95), weight_decay=0.1)
+    return model, opt
 
 
 def main() -> int:
@@ -55,8 +64,7 @@ def main() -> int:
 
     cfg = STAGES[args.stage]
     device = torch.device("cuda")
-    torch.manual_seed(0)
-    model = Transformer(cfg).to(device)
+    model, opt = _make_model_and_opt(cfg, device)
     n_params = model.count_params()
 
     compiled = False
@@ -67,7 +75,6 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             print(f"警告：torch.compile 失败，改用普通模式：{type(e).__name__}: {e}", file=sys.stderr)
 
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, betas=(0.9, 0.95), weight_decay=0.1)
     record = {
         "time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "stage": args.stage,
@@ -89,26 +96,40 @@ def main() -> int:
         opt.step()
         opt.zero_grad(set_to_none=True)
 
-    total_mem_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
-    record["gpu_total_mem_gb"] = round(total_mem_gb, 1)
+    def record_memory() -> dict[str, float]:
+        snap = cuda_memory_snapshot()
+        record.update(
+            {
+                "peak_mem_gb": round(snap["allocated_gb"], 2),
+                "peak_reserved_gb": round(snap["reserved_gb"], 2),
+                "gpu_total_mem_gb": round(snap["total_gb"], 1),
+            }
+        )
+        return snap
 
     def check_spill() -> bool:
-        peak = torch.cuda.max_memory_allocated() / 1e9
-        if peak > args.max_mem_frac * total_mem_gb:
-            record.update({"status": "spill", "peak_mem_gb": round(peak, 2)})
+        snap = record_memory()
+        if exceeds_memory_budget(snap["reserved_gb"], snap["total_gb"], args.max_mem_frac):
+            record["status"] = "spill"
             print(json.dumps(record, ensure_ascii=False))
             _append(args.out, record)
             return True
         return False
 
+    def probe_then_warmup() -> bool:
+        """第一步先探显存，溢出就立刻停，不白等。返回是否溢出。"""
+        step()
+        torch.cuda.synchronize()
+        if check_spill():
+            return True
+        for _ in range(args.warmup - 1):
+            step()
+        return False
+
     try:
         try:
-            step()  # 第一步先探显存，溢出就立刻停，不白等
-            torch.cuda.synchronize()
-            if check_spill():
+            if probe_then_warmup():
                 return 2
-            for _ in range(args.warmup - 1):
-                step()
         except torch.cuda.OutOfMemoryError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -118,11 +139,9 @@ def main() -> int:
             print(f"警告：编译模式首次运行失败，改用普通模式：{type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
             compiled = False
             record["compiled"] = False
-            torch.manual_seed(0)
-            model = Transformer(cfg).to(device)
-            opt = torch.optim.AdamW(model.parameters(), lr=1e-4, betas=(0.9, 0.95), weight_decay=0.1)
-            for _ in range(args.warmup):
-                step()
+            model, opt = _make_model_and_opt(cfg, device)
+            if probe_then_warmup():
+                return 2
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
         t0 = time.perf_counter()
@@ -136,13 +155,13 @@ def main() -> int:
         _append(args.out, record)
         return 2
 
+    record_memory()
     tokens = args.steps * args.micro_batch * args.seq_len
     record.update(
         {
             "status": "ok",
             "tokens_per_s": round(tokens / elapsed),
             "ms_per_step": round(1000 * elapsed / args.steps, 1),
-            "peak_mem_gb": round(torch.cuda.max_memory_allocated() / 1e9, 2),
         }
     )
     print(json.dumps(record, ensure_ascii=False))
