@@ -1,0 +1,1012 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>黑米 Heimi 训练窗口</title>
+<link rel="icon" href="data:,">
+<style>
+/* 配色：黑米煮开是深紫色，墨色与唯一的强调色都取自它；图表的两条线用校验过的蓝、橙。 */
+:root {
+  color-scheme: light;
+  --plane: #f5f3f7;
+  --surface: #fdfcfe;
+  --ink: #1f1723;
+  --ink-2: #574d5e;
+  --muted: #6e6676;
+  --hairline: #e4dfe8;
+  --axis: #cbc4d1;
+  --accent: #5a2d73;
+  --on-accent: #ffffff;
+  --accent-wash: rgba(90, 45, 115, 0.07);
+  --series-web: #2a78d6;
+  --series-code: #eb6834;
+  --series-context: #8a8291;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --critical: #d03b3b;
+  --shadow: rgba(31, 23, 35, 0.14);
+  --font-ui: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-mark: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", "SimSun", serif;
+  --font-code: "Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --plane: #141217;
+    --surface: #1d1a21;
+    --ink: #f1eef4;
+    --ink-2: #c5bdcb;
+    --muted: #9a92a1;
+    --hairline: #2f2a35;
+    --axis: #3d3745;
+    --accent: #c3a3da;
+    --on-accent: #1d1a21;
+    --accent-wash: rgba(195, 163, 218, 0.1);
+    --series-web: #3987e5;
+    --series-code: #d95926;
+    --series-context: #8f8796;
+    --shadow: rgba(0, 0, 0, 0.5);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane: #141217;
+  --surface: #1d1a21;
+  --ink: #f1eef4;
+  --ink-2: #c5bdcb;
+  --muted: #9a92a1;
+  --hairline: #2f2a35;
+  --axis: #3d3745;
+  --accent: #c3a3da;
+  --on-accent: #1d1a21;
+  --accent-wash: rgba(195, 163, 218, 0.1);
+  --series-web: #3987e5;
+  --series-code: #d95926;
+  --series-context: #8f8796;
+  --shadow: rgba(0, 0, 0, 0.5);
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--plane);
+  color: var(--ink);
+  font: 15px/1.6 var(--font-ui);
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 24px;
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 28px 32px 18px;
+}
+.brand { display: flex; align-items: baseline; gap: 12px; }
+.wordmark { font-family: var(--font-mark); font-size: 42px; font-weight: 700; line-height: 1; letter-spacing: 0.06em; }
+.wordmark-latin { color: var(--ink-2); font-size: 15px; }
+.top-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.top-controls label { color: var(--ink-2); font-size: 13px; }
+#conn { color: var(--ink-2); font-size: 13px; }
+#conn:not(:empty)::before {
+  content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--warning); margin-right: 6px;
+}
+
+main { max-width: 1320px; margin: 0 auto; padding: 0 32px 72px; }
+.sheet { background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; }
+.sheet > * { padding: 28px 32px; }
+.sheet > * + * { border-top: 1px solid var(--hairline); }
+
+.lede { margin: 0; font-size: 24px; line-height: 1.4; font-weight: 600; max-width: 30em; }
+
+.top-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; padding: 0; }
+.top-grid > section { padding: 28px 32px; min-width: 0; }
+.top-grid > section + section { border-left: 1px solid var(--hairline); }
+
+h2 { margin: 0 0 14px; font-size: 18px; line-height: 1.3; font-weight: 600; }
+h3.sub { margin: 22px 0 8px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.hint { margin: -6px 0 18px; color: var(--ink-2); font-size: 14px; max-width: 44em; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+
+/* 图例：线型的钥匙，文字用墨色，身份靠旁边那一小段线 */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 0 0 6px; color: var(--ink-2); font-size: 13px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { display: inline-block; width: 20px; height: 0; border-top: 2px solid var(--series-context); }
+.legend .k-web i { border-top-color: var(--series-web); }
+.legend .k-code i { border-top-color: var(--series-code); }
+.legend .k-train i { border-top-width: 1.25px; }
+.legend .k-base-web i { border-top: 2px dashed var(--series-web); }
+.legend .k-base-code i { border-top: 2px dashed var(--series-code); }
+.legend .k-growth i { width: 0; height: 14px; border-top: 0; border-left: 1px solid var(--accent); }
+
+.charts { position: relative; }
+.chart-box { position: relative; width: 100%; }
+.chart-box.tall { height: 360px; }
+.chart-box.short { height: 150px; }
+canvas { display: block; }
+.tip {
+  position: absolute; z-index: 5; pointer-events: none; min-width: 168px;
+  background: var(--surface); border: 1px solid var(--axis); border-radius: 6px;
+  padding: 8px 10px; font-size: 12.5px; line-height: 1.5; box-shadow: 0 6px 18px var(--shadow);
+}
+.tip .tip-x { font-weight: 600; }
+.tip .tip-sub { color: var(--ink-2); margin-bottom: 4px; }
+.tip .row { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.tip .row i { display: inline-block; width: 12px; height: 0; border-top: 2px solid var(--series-context); }
+.tip .row b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tip .row span { color: var(--ink-2); }
+.tip .k-web i { border-top-color: var(--series-web); }
+.tip .k-code i { border-top-color: var(--series-code); }
+.tip .k-base-web i { border-top: 2px dashed var(--series-web); }
+.tip .k-base-code i { border-top: 2px dashed var(--series-code); }
+.tip .k-params i { border-top-color: var(--ink-2); }
+
+.table-view { margin-top: 14px; font-size: 13px; }
+.table-view summary { cursor: pointer; color: var(--ink-2); width: fit-content; }
+.table-scroll { overflow-x: auto; margin-top: 10px; }
+table { border-collapse: collapse; min-width: 560px; }
+th, td { padding: 6px 14px 6px 0; text-align: right; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--hairline); white-space: nowrap; }
+th { font-weight: 600; color: var(--ink-2); }
+th:first-child, td:first-child { text-align: left; }
+
+/* 当前状态：标签在上、数值在下的一栏数字 */
+.state { display: flex; align-items: center; gap: 10px; margin: 0 0 18px; font-weight: 600; }
+.grain {
+  display: inline-block; width: 16px; height: 9px; border-radius: 50%; transform: rotate(-24deg);
+  border: 1.5px solid var(--muted); background: transparent; flex: none;
+}
+.grain.running { background: var(--good); border-color: var(--good); }
+.grain.quiet { background: var(--warning); border-color: var(--warning); }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; margin: 0; }
+.stats div { min-width: 0; }
+.stats dt { color: var(--ink-2); font-size: 13px; }
+.stats dd { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.stats dd small { font-size: 13px; font-weight: 400; color: var(--ink-2); }
+
+/* 成长样本墙：每条提示一列，往下是时间 */
+.wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 28px 28px; }
+.wall-col { min-width: 0; }
+.prompt {
+  margin: 0 0 4px; padding: 10px 12px; background: var(--accent-wash); border-left: 2px solid var(--accent);
+  font: 12.5px/1.55 var(--font-code); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.sample { padding: 10px 0 10px 12px; border-bottom: 1px solid var(--hairline); }
+.sample:last-child { border-bottom: 0; }
+.sample .when { color: var(--ink-2); font-size: 12.5px; }
+.sample pre, .out {
+  margin: 4px 0 0; font: 12.5px/1.6 var(--font-code); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.blank { color: var(--muted); font-style: italic; }
+
+/* 试玩台 */
+.pg { display: grid; grid-template-columns: minmax(280px, 420px) minmax(0, 1fr); gap: 32px; }
+.pg form { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field > span { font-size: 13px; color: var(--ink-2); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+textarea, select, input[type="number"] {
+  width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--axis); border-radius: 6px;
+  background: var(--surface); color: var(--ink); font: inherit;
+}
+textarea { font: 13px/1.55 var(--font-code); resize: vertical; }
+.top-controls select { width: auto; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+button {
+  font: inherit; font-weight: 600; cursor: pointer; border-radius: 6px; padding: 9px 20px;
+  border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); width: fit-content;
+}
+button:disabled { opacity: 0.55; cursor: default; }
+button.ghost { background: transparent; color: var(--accent); padding: 5px 12px; font-weight: 400; font-size: 13px; }
+.pg-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; align-content: start; min-width: 0; }
+.pane { min-width: 0; }
+.pane h3 { margin: 0 0 2px; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.pane .meta { color: var(--ink-2); font-size: 12.5px; }
+.out { padding: 12px; background: var(--accent-wash); border-radius: 6px; margin-top: 8px; }
+.out .ctx { color: var(--muted); }
+.out .gen { color: var(--ink); font-weight: 600; }
+.error { display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; font-size: 14px; }
+.error::before {
+  content: "!"; flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--critical); color: #ffffff;
+  font-size: 12px; font-weight: 700; line-height: 18px; text-align: center; margin-top: 2px;
+}
+.placeholder { color: var(--ink-2); font-size: 14px; }
+
+#empty { background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; padding: 40px 32px; max-width: 46em; }
+#empty pre { font: 13px/1.6 var(--font-code); background: var(--accent-wash); padding: 12px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (max-width: 900px) {
+  .top { padding: 20px 16px 14px; }
+  .wordmark { font-size: 34px; }
+  main { padding: 0 0 48px; }
+  .sheet, #empty { border-left: 0; border-right: 0; border-radius: 0; }
+  .sheet > *, .top-grid > section { padding: 22px 16px; }
+  .top-grid { grid-template-columns: minmax(0, 1fr); }
+  .top-grid > section + section { border-left: 0; border-top: 1px solid var(--hairline); }
+  .lede { font-size: 20px; }
+  .chart-box.tall { height: 300px; }
+  .pg { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .row2 { grid-template-columns: 1fr 1fr; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="wordmark">黑米</span>
+    <span class="wordmark-latin">Heimi 训练窗口</span>
+  </div>
+  <div class="top-controls">
+    <label for="run-select">查看哪一次训练</label>
+    <select id="run-select"></select>
+    <span id="conn" role="status"></span>
+  </div>
+</header>
+
+<main>
+  <div id="empty" hidden>
+    <h2>还没有训练记录</h2>
+    <p>先开始一次训练，这里就会出现它的成长曲线：</p>
+    <pre>python train.py --config configs/ladder.yaml --run heimi</pre>
+    <p>这个页面每 5 秒自己刷新一次，不用重开。</p>
+  </div>
+
+  <div id="content" class="sheet" hidden>
+    <p id="lede" class="lede"></p>
+
+    <div class="top-grid">
+      <section id="overview">
+        <h2>成长总览</h2>
+        <div id="legend" class="legend"></div>
+        <div id="charts" class="charts">
+          <div class="chart-box tall">
+            <canvas id="loss-chart" tabindex="0" role="img" aria-label="损失随累计训练 token 的变化。左右方向键在评测点之间移动，下方有表格。"></canvas>
+          </div>
+          <h3 class="sub">参数量</h3>
+          <div class="chart-box short">
+            <canvas id="params-chart" role="img" aria-label="非嵌入参数量随累计训练 token 的阶梯变化"></canvas>
+          </div>
+          <div id="tip" class="tip" hidden></div>
+        </div>
+        <details class="table-view">
+          <summary>用表格看评测数据</summary>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr><th>阶段</th><th>步</th><th>累计 token</th><th>验证 web</th><th>验证 code</th><th>HellaSwag</th><th>FIM 精确匹配</th></tr>
+              </thead>
+              <tbody id="eval-rows"></tbody>
+            </table>
+          </div>
+        </details>
+      </section>
+
+      <section id="status">
+        <h2>当前状态</h2>
+        <p class="state"><span id="state-grain" class="grain"></span><span id="state-text"></span></p>
+        <dl id="stats" class="stats"></dl>
+        <h3 class="sub">最近一次评测</h3>
+        <dl id="last-eval" class="stats"></dl>
+      </section>
+    </div>
+
+    <section id="samples">
+      <div class="section-head">
+        <h2>成长样本墙</h2>
+        <button id="samples-toggle" class="ghost" type="button" hidden></button>
+      </div>
+      <p class="hint">同一批提示，在训练的不同时刻让它接着写。从上往下读，是它一路学会说话的过程。</p>
+      <div id="wall" class="wall"></div>
+    </section>
+
+    <section id="playground">
+      <h2>试玩台</h2>
+      <p class="hint">自己写个开头让它接。后缀留空是普通续写；填了后缀就是填空，它只补中间那一行。</p>
+      <div class="pg">
+        <form id="pg-form">
+          <label class="field"><span>前缀</span>
+            <textarea id="pg-prefix" rows="5" spellcheck="false">The history of the Roman Empire began when</textarea>
+          </label>
+          <label class="field"><span>后缀（可不填）</span>
+            <textarea id="pg-suffix" rows="2" spellcheck="false"></textarea>
+          </label>
+          <label class="field"><span>用哪个检查点</span>
+            <select id="pg-ckpt"></select>
+          </label>
+          <label class="check"><input id="pg-compare" type="checkbox"> 并排比较另一个检查点</label>
+          <label class="field" id="pg-ckpt2-field" hidden><span>另一个检查点</span>
+            <select id="pg-ckpt2"></select>
+          </label>
+          <div class="row2">
+            <label class="field"><span>设备</span>
+              <select id="pg-device"><option value="cpu">CPU</option><option value="cuda">GPU</option></select>
+            </label>
+            <label class="field"><span>最多几个 token</span>
+              <input id="pg-tokens" type="number" min="1" max="256" value="48">
+            </label>
+            <label class="field"><span>温度</span>
+              <input id="pg-temp" type="number" min="0" max="2" step="0.1" value="0.8">
+            </label>
+          </div>
+          <button id="pg-go" type="submit">生成</button>
+        </form>
+        <div id="pg-results" class="pg-results">
+          <p class="placeholder">结果会出现在这里。大模型在 CPU 上可能要几十秒，超过 60 秒会自动放弃。</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script src="/static/chart.umd.min.js"></script>
+<script>
+(() => {
+"use strict";
+
+// ---------- 小工具 ----------
+const $ = (id) => document.getElementById(id);
+
+// 建节点：字符串一律作为文本节点追加，模型产出的文字永远不会被当成标记解析
+function el(tag, props, ...kids) {
+  const node = document.createElement(tag);
+  if (props) {
+    for (const [k, v] of Object.entries(props)) {
+      if (v == null || v === false) continue;
+      if (k === "class") node.className = v;
+      else if (k === "text") node.textContent = v;
+      else node.setAttribute(k, v === true ? "" : v);
+    }
+  }
+  for (const kid of kids) if (kid != null) node.append(kid);
+  return node;
+}
+
+const trimZeros = (s) => (s.includes(".") ? s.replace(/\.?0+$/, "") : s);
+function fmtCount(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  if (n >= 1e8) return trimZeros((n / 1e9).toFixed(2)) + "B";
+  if (n >= 1e6) return Math.round(n / 1e6) + "M";
+  if (n >= 1e3) return Math.round(n / 1e3) + "K";
+  return String(Math.round(n));
+}
+const fmtParams = (n) => (n == null ? "—" : n >= 1e6 ? Math.round(n / 1e6) + "M" : Math.round(n / 1e3) + "K");
+const fmtFixed = (x, d) => (x == null ? "—" : Number(x).toFixed(d));
+const fmtPct = (x) => (x == null ? "—" : (x * 100).toFixed(1) + "%");
+function fmtDuration(s) {
+  if (s == null) return "—";
+  if (s < 60) return "不到 1 分钟";
+  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+  return h ? `${h} 小时 ${m} 分` : `${m} 分钟`;
+}
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const isBaseline = (name) => name.startsWith("baseline");
+
+// ---------- 状态 ----------
+const state = {
+  runs: [], run: null, baseline: null,
+  metrics: new Map(),   // run → 指标数组（增量追加）
+  overview: new Map(),  // run → {eval, growth, params}
+  samples: [], samplesRun: null, showAll: false,
+  status: null, connected: true,
+};
+const sig = {};  // 各块上次渲染时的内容指纹，没变就不重建 DOM
+
+async function getJSON(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error(`${url} ${r.status}`);
+  return r.json();
+}
+
+function pickRun(runs) {
+  const found = runs.find((r) => r.name === "heimi") || runs.find((r) => !isBaseline(r.name)) || runs[0];
+  return found ? found.name : null;
+}
+
+async function refresh() {
+  let ok = true;
+  try {
+    state.runs = await getJSON("/api/runs");
+  } catch (e) {
+    ok = false;
+  }
+  if (!state.run || !state.runs.some((r) => r.name === state.run)) state.run = pickRun(state.runs);
+  const run = state.run;
+  const jobs = [getJSON("/api/status").then((s) => { state.status = s; })];
+  if (run) {
+    const base = `/api/runs/${encodeURIComponent(run)}`;
+    const have = state.metrics.get(run) || [];
+    const since = have.length ? have[have.length - 1].global_step : -1;
+    jobs.push(getJSON(`${base}/metrics?since=${since}`).then((rows) => {
+      const cur = state.metrics.get(run) || [];
+      const last = cur.length ? cur[cur.length - 1].global_step : -1;
+      state.metrics.set(run, cur.concat(rows.filter((r) => r.global_step > last)));
+    }));
+    jobs.push(getJSON(`${base}/overview`).then((o) => state.overview.set(run, o)));
+    jobs.push(getJSON(`${base}/samples`).then((rows) => { state.samples = rows; state.samplesRun = run; }));
+    const baseRun = state.runs.find((r) => isBaseline(r.name) && r.name !== run);
+    state.baseline = baseRun ? baseRun.name : null;
+    if (baseRun) {
+      jobs.push(getJSON(`/api/runs/${encodeURIComponent(baseRun.name)}/overview`).then((o) => state.overview.set(baseRun.name, o)));
+    }
+  }
+  const results = await Promise.allSettled(jobs);
+  if (results.some((r) => r.status === "rejected")) ok = false;
+  state.connected = ok;
+  render();
+}
+
+function render() {
+  $("conn").textContent = state.connected ? "" : "连接中断，正在重试";
+  const empty = state.runs.length === 0;
+  $("empty").hidden = !empty;
+  $("content").hidden = empty;
+  if (empty) return;
+  renderRunSelect();
+  renderLede();
+  renderLegend();
+  renderCharts();
+  renderEvalTable();
+  renderStatus();
+  renderSamples();
+  renderCheckpointOptions();
+}
+
+// ---------- 顶栏 ----------
+function renderRunSelect() {
+  const names = state.runs.map((r) => r.name);
+  const key = names.join("|");
+  const select = $("run-select");
+  if (sig.runs !== key) {
+    sig.runs = key;
+    select.replaceChildren(...names.map((n) => el("option", { value: n, text: n })));
+  }
+  select.value = state.run;
+}
+$("run-select").addEventListener("change", (e) => {
+  state.run = e.target.value;
+  state.samples = [];
+  clearHover();
+  render();
+  refresh();
+});
+
+function currentRun() {
+  return state.runs.find((r) => r.name === state.run) || null;
+}
+
+function renderLede() {
+  const r = currentRun();
+  if (!r) return;
+  const who = r.name === "heimi" ? "黑米" : r.name;
+  const stage = r.stages.find((s) => s.name === r.stage);
+  let text;
+  if (!stage || stage.params == null) {
+    text = `${who} 还没有开始训练。`;
+  } else {
+    text = `${who} 现在有 ${fmtParams(stage.params)} 个参数，读过 ${fmtCount(r.tokens_total)} 个 token，正处在 ${r.stage} 阶段。`;
+  }
+  $("lede").textContent = text;
+}
+
+// ---------- 成长总览 ----------
+function renderLegend() {
+  const key = String(Boolean(state.baseline));
+  if (sig.legend === key) return;
+  sig.legend = key;
+  const items = [["k-web", "验证 web"], ["k-code", "验证 code"], ["k-train", "训练损失"]];
+  if (state.baseline) items.push(["k-base-web", "对照 web"], ["k-base-code", "对照 code"]);
+  items.push(["k-growth", "增长点"]);
+  $("legend").replaceChildren(...items.map(([cls, label]) => el("span", { class: cls }, el("i"), label)));
+}
+
+function seriesOf(run) {
+  const metrics = state.metrics.get(run) || [];
+  const o = state.overview.get(run) || { eval: [], growth: [], params: [] };
+  return {
+    train: metrics.map((m) => ({ x: m.tokens_total, y: m.loss, stage: m.stage, step: m.step })),
+    web: o.eval.map((e) => ({ x: e.tokens_total, y: e.val_loss_web })),
+    code: o.eval.map((e) => ({ x: e.tokens_total, y: e.val_loss_code })),
+    params: o.params.map((p) => ({ x: p.tokens_total, y: p.params })),
+    growth: o.growth,
+    evals: o.eval,
+  };
+}
+
+let lossChart = null, paramsChart = null;
+let current = null;  // 当前画在图上的序列，悬停层用
+const hover = { x: null, onEval: false };
+const FONT = () => getComputedStyle(document.body).fontFamily;
+
+// 增长点：一条竖线，顶上写"13M → 26M 加深"；标签放在图上方的留白里，不压数据
+const growthPlugin = {
+  id: "growth",
+  beforeDatasetsDraw(chart) {
+    const marks = chart.$growth || [];
+    if (!marks.length) return;
+    const { ctx, chartArea: a, scales: { x } } = chart;
+    const t = chart.$theme;
+    ctx.save();
+    ctx.font = `12px ${FONT()}`;
+    ctx.textBaseline = "middle";
+    let lastRight = -Infinity, row = 0;
+    for (const g of marks) {
+      const px = x.getPixelForValue(g.tokens_total);
+      if (px < a.left - 1 || px > a.right + 1) continue;
+      let labelY = null;
+      if (chart.$growthLabels) {
+        const w = ctx.measureText(g.label).width;
+        let left = px + 6;
+        if (left + w > chart.width - 4) left = px - 6 - w;
+        row = left < lastRight + 10 ? (row + 1) % 2 : 0;  // 挨得太近就错开一行
+        lastRight = left + w;
+        labelY = a.top - 12 - row * 16;
+        ctx.fillStyle = t.ink2;
+        ctx.fillText(g.label, left, labelY);
+      }
+      ctx.strokeStyle = t.accent;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(Math.round(px) + 0.5, labelY == null ? a.top : labelY - 7);
+      ctx.lineTo(Math.round(px) + 0.5, a.bottom);
+      ctx.stroke();
+    }
+    ctx.restore();
+  },
+};
+
+// 线尾的直接标注：只标当前 run 的两条验证线和参数量，文字用墨色
+const endLabelPlugin = {
+  id: "endLabels",
+  afterDatasetsDraw(chart) {
+    const { ctx, chartArea: a } = chart;
+    const t = chart.$theme;
+    ctx.save();
+    ctx.font = `12px ${FONT()}`;
+    ctx.textBaseline = "middle";
+    const taken = [];
+    chart.data.datasets.forEach((ds, i) => {
+      if (!ds.endLabel || !ds.data.length) return;
+      const meta = chart.getDatasetMeta(i);
+      const p = meta.data[meta.data.length - 1];
+      if (!p) return;
+      const y = Math.min(Math.max(p.y, a.top + 6), a.bottom - 6);
+      if (taken.some((ty) => Math.abs(ty - y) < 15)) return;  // 挤在一起就不标，图例和悬停会说
+      taken.push(y);
+      ctx.fillStyle = t.ink;
+      ctx.fillText(ds.endLabel(ds.data[ds.data.length - 1]), p.x + 10, y);
+    });
+    ctx.restore();
+  },
+};
+
+// 悬停层：一条竖线对准 X，各序列在那一点的值写在同一个提示框里
+const crosshairPlugin = {
+  id: "crosshair",
+  afterDatasetsDraw(chart) {
+    if (hover.x == null) return;
+    const { ctx, chartArea: a, scales: { x, y } } = chart;
+    const t = chart.$theme;
+    const px = x.getPixelForValue(hover.x);
+    if (px < a.left - 1 || px > a.right + 1) return;
+    ctx.save();
+    ctx.strokeStyle = t.muted;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(Math.round(px) + 0.5, a.top);
+    ctx.lineTo(Math.round(px) + 0.5, a.bottom);
+    ctx.stroke();
+    for (const d of chart.$hoverDots || []) {
+      ctx.beginPath();
+      ctx.arc(px, y.getPixelForValue(d.y), 5, 0, Math.PI * 2);
+      ctx.fillStyle = d.color;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = t.surface;
+      ctx.stroke();
+    }
+    ctx.restore();
+  },
+};
+
+function readTheme() {
+  return {
+    ink: cssVar("--ink"), ink2: cssVar("--ink-2"), muted: cssVar("--muted"), grid: cssVar("--hairline"),
+    axis: cssVar("--axis"), surface: cssVar("--surface"), accent: cssVar("--accent"),
+    web: cssVar("--series-web"), code: cssVar("--series-code"), context: cssVar("--series-context"),
+  };
+}
+
+function chartOptions(t, topPad, yTick, xTitle) {
+  return {
+    parsing: false, normalized: true, animation: false, responsive: true, maintainAspectRatio: false,
+    events: [],  // 悬停自己处理：一条竖线管所有序列
+    layout: { padding: { top: topPad, right: 78, bottom: 0, left: 0 } },
+    scales: {
+      x: {
+        type: "linear", min: 0,
+        border: { color: t.axis },
+        grid: { color: t.grid, drawTicks: false },
+        ticks: { color: t.muted, padding: 6, maxTicksLimit: 8, callback: (v) => fmtCount(v), font: { size: 12 } },
+        title: { display: Boolean(xTitle), text: xTitle || "", color: t.muted, font: { size: 12 } },
+      },
+      y: {
+        border: { display: false },
+        grid: { color: t.grid, drawTicks: false },
+        ticks: { color: t.muted, padding: 8, maxTicksLimit: 6, callback: yTick, font: { size: 12 } },
+        afterFit: (scale) => { scale.width = 52; },  // 两张图的纵轴一样宽，横轴才能上下对齐
+      },
+    },
+    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+  };
+}
+
+function buildCharts() {
+  const t = readTheme();
+  Chart.defaults.font.family = FONT();
+  lossChart = new Chart($("loss-chart"), {
+    type: "line",
+    data: { datasets: [] },
+    options: chartOptions(t, 44, (v) => trimZeros(Number(v).toFixed(2)), ""),
+    plugins: [growthPlugin, endLabelPlugin, crosshairPlugin],
+  });
+  lossChart.$growthLabels = true;
+  paramsChart = new Chart($("params-chart"), {
+    type: "line",
+    data: { datasets: [] },
+    options: chartOptions(t, 10, (v) => fmtParams(v), "累计训练 token"),
+    plugins: [growthPlugin, endLabelPlugin, crosshairPlugin],
+  });
+  paramsChart.options.scales.y.beginAtZero = true;
+  lossChart.$theme = paramsChart.$theme = t;
+}
+
+function renderCharts() {
+  if (typeof Chart === "undefined") return;
+  if (!lossChart) buildCharts();
+  const t = lossChart.$theme;
+  const s = seriesOf(state.run);
+  const b = state.baseline ? seriesOf(state.baseline) : null;
+  current = { s, b };
+
+  const line = (label, data, color, extra) => Object.assign({
+    label, data, borderColor: color, backgroundColor: color, borderWidth: 2, tension: 0,
+    borderJoinStyle: "round", borderCapStyle: "round", pointRadius: 0, clip: 10,
+  }, extra);
+  const marked = { pointRadius: 5, pointBackgroundColor: undefined, pointBorderColor: t.surface, pointBorderWidth: 2 };
+  const datasets = [
+    line("训练损失", s.train, t.context, { borderWidth: 1.25 }),
+    line("验证 web", s.web, t.web, { ...marked, pointBackgroundColor: t.web, endLabel: (p) => `web ${p.y.toFixed(3)}` }),
+    line("验证 code", s.code, t.code, { ...marked, pointBackgroundColor: t.code, endLabel: (p) => `code ${p.y.toFixed(3)}` }),
+  ];
+  if (b) {
+    datasets.push(line("对照 web", b.web, t.web, { borderDash: [6, 4] }), line("对照 code", b.code, t.code, { borderDash: [6, 4] }));
+  }
+  let xMax = 1;
+  for (const arr of [s.train, s.web, s.params, b ? b.web : []]) for (const p of arr) if (p.x > xMax) xMax = p.x;
+  xMax *= 1.03;
+
+  lossChart.data.datasets = datasets;
+  lossChart.options.scales.x.max = xMax;
+  lossChart.$growth = s.growth;
+  lossChart.update("none");
+
+  paramsChart.data.datasets = [line("参数量", s.params, t.ink2, { stepped: true, endLabel: (p) => fmtParams(p.y) })];
+  paramsChart.options.scales.x.max = xMax;
+  paramsChart.$growth = s.growth;
+  paramsChart.update("none");
+}
+
+function renderEvalTable() {
+  const o = state.overview.get(state.run) || { eval: [] };
+  const key = state.run + ":" + JSON.stringify(o.eval);
+  if (sig.evalTable === key) return;
+  sig.evalTable = key;
+  const rows = o.eval.map((e) => el("tr", null,
+    el("td", { text: e.stage }), el("td", { text: String(e.global_step) }), el("td", { text: fmtCount(e.tokens_total) }),
+    el("td", { text: fmtFixed(e.val_loss_web, 3) }), el("td", { text: fmtFixed(e.val_loss_code, 3) }),
+    el("td", { text: fmtPct(e.hellaswag_acc) }), el("td", { text: fmtPct(e.fim_em) })));
+  if (!rows.length) rows.push(el("tr", null, el("td", { colspan: "7", text: "还没有评测：训练每 500 步评一次。" })));
+  $("eval-rows").replaceChildren(...rows);
+}
+
+// ---- 悬停与键盘 ----
+function nearest(points, x) {
+  let best = null, bestD = Infinity;
+  for (const p of points) {
+    const d = Math.abs(p.x - x);
+    if (d < bestD) { bestD = d; best = p; }
+  }
+  return best;
+}
+const exact = (points, x) => points.find((p) => p.x === x) || null;
+function stepValue(points, x) {
+  let v = null;
+  for (const p of points) if (p.x <= x) v = p.y;
+  return v;
+}
+function evalXs() {
+  if (!current) return [];
+  const xs = new Set(current.s.web.map((p) => p.x));
+  if (current.b) for (const p of current.b.web) xs.add(p.x);
+  return [...xs].sort((a, b) => a - b);
+}
+
+function clearHover() {
+  hover.x = null;
+  $("tip").hidden = true;
+  for (const c of [lossChart, paramsChart]) if (c) { c.$hoverDots = []; c.draw(); }
+}
+
+function showHover(xv, onEval, anchorPx) {
+  if (!current || !lossChart) return;
+  const t = lossChart.$theme;
+  const { s, b } = current;
+  hover.x = xv;
+  hover.onEval = onEval;
+  const tip = $("tip");
+  const rows = [];
+  const lossDots = [];
+  const row = (cls, value, name) => rows.push(el("div", { class: "row " + cls }, el("i"), el("b", { text: value }), el("span", { text: name })));
+
+  const tr = nearest(s.train, xv);
+  if (onEval) {
+    const w = exact(s.web, xv), c = exact(s.code, xv);
+    if (w) { row("k-web", w.y.toFixed(3), "验证 web"); lossDots.push({ y: w.y, color: t.web }); }
+    if (c) { row("k-code", c.y.toFixed(3), "验证 code"); lossDots.push({ y: c.y, color: t.code }); }
+    if (b) {
+      const bw = exact(b.web, xv), bc = exact(b.code, xv);
+      if (bw) { row("k-base-web", bw.y.toFixed(3), "对照 web"); lossDots.push({ y: bw.y, color: t.web }); }
+      if (bc) { row("k-base-code", bc.y.toFixed(3), "对照 code"); lossDots.push({ y: bc.y, color: t.code }); }
+    }
+  }
+  if (tr) { row("k-train", tr.y.toFixed(3), "训练损失"); if (!onEval) lossDots.push({ y: tr.y, color: t.context }); }
+  const params = stepValue(s.params, xv);
+  if (params != null) row("k-params", fmtParams(params), "参数量");
+
+  const head = [el("div", { class: "tip-x", text: `${fmtCount(xv)} token` })];
+  if (tr) head.push(el("div", { class: "tip-sub", text: `${tr.stage} 第 ${tr.step} 步附近` }));
+  tip.replaceChildren(...head, ...rows);
+  tip.hidden = false;
+
+  lossChart.$hoverDots = lossDots;
+  paramsChart.$hoverDots = params != null ? [{ y: params, color: t.ink2 }] : [];
+  lossChart.draw();
+  paramsChart.draw();
+
+  // 提示框跟着竖线走，靠右放不下就翻到左边
+  const box = $("charts").getBoundingClientRect();
+  const w = tip.offsetWidth;
+  let left = anchorPx + 14;
+  if (left + w > box.width - 4) left = anchorPx - 14 - w;
+  tip.style.left = Math.max(0, left) + "px";
+  tip.style.top = "36px";
+}
+
+function pointerMove(chart, e) {
+  const a = chart.chartArea;
+  const rect = chart.canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left;
+  if (!a || px < a.left - 6 || px > a.right + 6 || !current) return clearHover();
+  const xs = chart.scales.x;
+  let snapped = null, snapD = 13;  // 评测点左右 12 像素内吸过去：目标比 8 像素的点大得多
+  for (const ex of evalXs()) {
+    const d = Math.abs(xs.getPixelForValue(ex) - px);
+    if (d < snapD) { snapD = d; snapped = ex; }
+  }
+  let xv, onEval = snapped != null;
+  if (onEval) {
+    xv = snapped;
+  } else {
+    const p = nearest(current.s.train, xs.getValueForPixel(px));
+    if (!p) return clearHover();
+    xv = p.x;
+  }
+  showHover(xv, onEval, xs.getPixelForValue(xv));
+}
+
+function wireHover() {
+  for (const id of ["loss-chart", "params-chart"]) {
+    const canvas = $(id);
+    canvas.addEventListener("pointermove", (e) => { const c = id === "loss-chart" ? lossChart : paramsChart; if (c) pointerMove(c, e); });
+    canvas.addEventListener("pointerleave", clearHover);
+  }
+  const loss = $("loss-chart");
+  loss.addEventListener("keydown", (e) => {
+    if (!lossChart || !current) return;
+    if (e.key === "Escape") return clearHover();
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const xs = evalXs();
+    if (!xs.length) return;
+    e.preventDefault();
+    let i = xs.indexOf(hover.x);
+    if (i < 0) i = e.key === "ArrowRight" ? -1 : xs.length;
+    i = Math.min(xs.length - 1, Math.max(0, i + (e.key === "ArrowRight" ? 1 : -1)));
+    showHover(xs[i], true, lossChart.scales.x.getPixelForValue(xs[i]));
+  });
+  loss.addEventListener("blur", clearHover);
+}
+
+// ---------- 当前状态 ----------
+const STATE_TEXT = { running: "训练中", quiet: "评测中或暂停", stopped: "已停止" };
+
+function statItems(pairs) {
+  return pairs.map(([label, value, note]) => {
+    const dd = el("dd", null, value);
+    if (note) dd.append(" ", el("small", { text: note }));
+    return el("div", null, el("dt", { text: label }), dd);
+  });
+}
+
+function renderStatus() {
+  const s = state.status;
+  if (!s) return;
+  $("state-grain").className = "grain " + (s.state || "stopped");
+  $("state-text").textContent = STATE_TEXT[s.state] || "已停止";
+  const live = s.state !== "stopped";
+  const gpu = s.gpu;
+  const temp = gpu ? gpu.temp_c : s.gpu_temp_c;
+  $("stats").replaceChildren(...statItems([
+    ["训练名", s.run || "—"],
+    ["阶段", s.stage || "—"],
+    ["步数", s.step == null ? "—" : String(s.step), s.steps ? `/ ${s.steps}` : ""],
+    ["损失", fmtFixed(s.loss, 3)],
+    ["学习率", s.lr == null ? "—" : Number(s.lr).toExponential(1)],
+    ["吞吐", s.tok_per_s == null ? "—" : fmtCount(s.tok_per_s), "token/秒"],
+    ["训练占用显存", s.mem_gb == null ? "—" : Number(s.mem_gb).toFixed(1), "GB"],
+    ["GPU 温度", temp == null ? "—" : String(Math.round(temp)), "°C"],
+    ["显卡显存现在", gpu ? gpu.mem_used_gb.toFixed(1) : "—", gpu ? `/ ${gpu.mem_total_gb.toFixed(1)} GB` : ""],
+    ["预计剩余", live ? fmtDuration(s.eta_seconds) : "—", live ? "本阶段" : ""],
+  ]));
+  const e = s.last_eval;
+  $("last-eval").replaceChildren(...statItems([
+    ["验证 web", e ? fmtFixed(e.val_loss_web, 3) : "—"],
+    ["验证 code", e ? fmtFixed(e.val_loss_code, 3) : "—"],
+    ["HellaSwag", e ? fmtPct(e.hellaswag_acc) : "—"],
+    ["FIM 精确匹配", e ? fmtPct(e.fim_em) : "—"],
+  ]));
+}
+
+// ---------- 成长样本墙 ----------
+const RECENT = 8;
+
+function renderSamples() {
+  const rows = state.samplesRun === state.run ? state.samples : [];
+  const key = `${state.run}:${rows.length}:${state.showAll}`;
+  if (sig.samples === key) return;
+  sig.samples = key;
+
+  const groups = new Map();
+  for (const r of rows) {
+    if (!groups.has(r.prompt_id)) groups.set(r.prompt_id, { prompt: r.prompt, items: [] });
+    groups.get(r.prompt_id).items.push(r);
+  }
+  let most = 0;
+  const cols = [];
+  for (const g of groups.values()) {
+    most = Math.max(most, g.items.length);
+    const shown = state.showAll ? g.items : g.items.slice(-RECENT);  // 旧在上、新在下
+    cols.push(el("div", { class: "wall-col" },
+      el("pre", { class: "prompt", text: g.prompt }),
+      ...shown.map((r) => el("div", { class: "sample" },
+        el("div", { class: "when", text: `${r.stage}，读到 ${fmtCount(r.tokens_total)} token 时` }),
+        r.completion.trim() === ""
+          ? el("pre", { class: "blank", text: "（什么都没写）" })
+          : el("pre", { text: r.completion })))));
+  }
+  if (!cols.length) cols.push(el("p", { class: "placeholder", text: "还没有采样：训练每 500 步让它写一次。" }));
+  $("wall").replaceChildren(...cols);
+
+  const toggle = $("samples-toggle");
+  toggle.hidden = most <= RECENT;
+  toggle.textContent = state.showAll ? `只看最近 ${RECENT} 次` : `展开全部 ${most} 次`;
+}
+$("samples-toggle").addEventListener("click", () => { state.showAll = !state.showAll; renderSamples(); });
+
+// ---------- 试玩台 ----------
+function checkpointLabel(c) {
+  return c.kind === "final" ? `${c.stage} 训完` : `${c.stage} 第 ${c.step} 步`;
+}
+
+function renderCheckpointOptions() {
+  const key = JSON.stringify(state.runs.map((r) => [r.name, r.checkpoints.map((c) => c.name)]));
+  if (sig.ckpts === key) return;
+  sig.ckpts = key;
+  for (const id of ["pg-ckpt", "pg-ckpt2"]) {
+    const select = $(id);
+    const keep = select.value;
+    const ordered = [...state.runs].sort((a, b) => (b.name === state.run) - (a.name === state.run));
+    select.replaceChildren(...ordered.filter((r) => r.checkpoints.length).map((r) => {
+      const group = el("optgroup", { label: r.name });
+      for (const c of r.checkpoints) group.append(el("option", { value: `${r.name}/${c.name}`, text: checkpointLabel(c) }));
+      return group;
+    }));
+    if (keep && [...select.options].some((o) => o.value === keep)) select.value = keep;
+  }
+  const second = $("pg-ckpt2");
+  if (second.options.length > 1 && second.value === $("pg-ckpt").value) second.selectedIndex = 1;
+  $("pg-go").disabled = $("pg-ckpt").options.length === 0;
+}
+
+$("pg-compare").addEventListener("change", (e) => { $("pg-ckpt2-field").hidden = !e.target.checked; });
+
+function paneFor(target) {
+  const option = [...$("pg-ckpt").options].find((o) => o.value === target);
+  const [run] = target.split("/");
+  const pane = el("div", { class: "pane" }, el("h3", { text: `${run}，${option ? option.textContent : target}` }));
+  const body = el("div", null, el("p", { class: "placeholder", text: "生成中…" }));
+  pane.append(body);
+  return { pane, body };
+}
+
+async function generateInto(target, body, input) {
+  const [run, checkpoint] = target.split("/");
+  const payload = {
+    run, checkpoint, prefix: input.prefix, max_new_tokens: input.maxNew, temperature: input.temperature, device: input.device,
+  };
+  if (input.suffix !== "") payload.suffix = input.suffix;
+  try {
+    const r = await fetch("/api/generate", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const detail = typeof data.detail === "string" ? data.detail : "请求没有通过检查：" + JSON.stringify(data.detail || r.status);
+      body.replaceChildren(el("div", { class: "error" }, el("span", { text: detail })));
+      return;
+    }
+    const out = el("pre", { class: "out" },
+      el("span", { class: "ctx", text: input.prefix }),
+      el("span", { class: "gen", text: data.text === "" ? "（什么都没写）" : data.text }),
+      el("span", { class: "ctx", text: input.suffix }));
+    const device = data.device === "cuda" ? "GPU" : "CPU";
+    body.replaceChildren(el("div", { class: "meta", text: `${device}，用了 ${Number(data.seconds).toFixed(1)} 秒，写了 ${data.tokens} 个 token` }), out);
+  } catch (e) {
+    body.replaceChildren(el("div", { class: "error" }, el("span", { text: "没连上窗口的后台，确认 dashboard.py 还在运行。" })));
+  }
+}
+
+$("pg-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = {
+    prefix: $("pg-prefix").value,
+    suffix: $("pg-suffix").value,
+    maxNew: Math.min(256, Math.max(1, Number($("pg-tokens").value) || 48)),
+    temperature: Math.min(2, Math.max(0, Number($("pg-temp").value) || 0)),
+    device: $("pg-device").value,
+  };
+  const results = $("pg-results");
+  if (input.prefix === "") {
+    results.replaceChildren(el("div", { class: "error" }, el("span", { text: "先写一点前缀。" })));
+    return;
+  }
+  const targets = [$("pg-ckpt").value];
+  if ($("pg-compare").checked && $("pg-ckpt2").value && $("pg-ckpt2").value !== targets[0]) targets.push($("pg-ckpt2").value);
+  const panes = targets.map((t) => paneFor(t));
+  results.replaceChildren(...panes.map((p) => p.pane));
+  const go = $("pg-go");
+  go.disabled = true;
+  go.textContent = "生成中…";
+  for (let i = 0; i < targets.length; i++) await generateInto(targets[i], panes[i].body, input);  // 先后发出，后台一次只跑一个
+  go.disabled = false;
+  go.textContent = "生成";
+});
+
+// ---------- 启动 ----------
+wireHover();
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  for (const c of [lossChart, paramsChart]) if (c) c.destroy();
+  lossChart = paramsChart = null;
+  render();
+});
+refresh();
+setInterval(refresh, 5000);
+})();
+</script>
+</body>
+</html>
