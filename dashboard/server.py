@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from dashboard import data
 from dashboard.worker import WorkerClient, WorkerError, WorkerTimeout
-from minids.logging_io import EVAL_FILE, EVENTS_FILE, METRICS_FILE, SAMPLES_FILE, read_jsonl
+from minids.logging_io import EVAL_FILE, EVENTS_FILE, SAMPLES_FILE
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -47,6 +47,11 @@ def create_app(runs_dir: Path, worker=None, repo_root: Path | None = None) -> Fa
     async def _not_found(request: Request, exc: data.RunNotFound) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
+    @app.exception_handler(data.LogUnreadable)
+    async def _log_unreadable(request: Request, exc: data.LogUnreadable) -> JSONResponse:
+        # 只有读这个 run 的接口会到这里；/api/runs 与 /api/status 自己接住，别的 run 不受影响
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+
     @app.get("/")
     def index():
         page = STATIC_DIR / "index.html"
@@ -60,19 +65,19 @@ def create_app(runs_dir: Path, worker=None, repo_root: Path | None = None) -> Fa
 
     @app.get("/api/runs/{run}/metrics")
     def api_metrics(run: str, since: int | None = None) -> list[dict]:
-        return read_jsonl(data.safe_run_dir(runs_dir, run) / METRICS_FILE, since)
+        return data.metrics_since(data.safe_run_dir(runs_dir, run), since)  # 已去掉中断重跑作废的那一段
 
     @app.get("/api/runs/{run}/eval")
     def api_eval(run: str) -> list[dict]:
-        return read_jsonl(data.safe_run_dir(runs_dir, run) / EVAL_FILE)
+        return data.read_log(data.safe_run_dir(runs_dir, run), EVAL_FILE)
 
     @app.get("/api/runs/{run}/events")
     def api_events(run: str) -> list[dict]:
-        return read_jsonl(data.safe_run_dir(runs_dir, run) / EVENTS_FILE)
+        return data.read_log(data.safe_run_dir(runs_dir, run), EVENTS_FILE)
 
     @app.get("/api/runs/{run}/samples")
     def api_samples(run: str) -> list[dict]:
-        return read_jsonl(data.safe_run_dir(runs_dir, run) / SAMPLES_FILE)
+        return data.read_log(data.safe_run_dir(runs_dir, run), SAMPLES_FILE)
 
     @app.get("/api/runs/{run}/overview")
     def api_overview(run: str) -> dict:

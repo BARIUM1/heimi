@@ -216,6 +216,11 @@ button.ghost { background: transparent; color: var(--accent); padding: 5px 12px;
   content: "!"; flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--critical); color: #ffffff;
   font-size: 12px; font-weight: 700; line-height: 18px; text-align: center; margin-top: 2px;
 }
+.warn { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 14px; }
+.warn::before {
+  content: "!"; flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--warning); color: #1f1723;
+  font-size: 12px; font-weight: 700; line-height: 18px; text-align: center; margin-top: 2px;
+}
 .placeholder { color: var(--ink-2); font-size: 14px; }
 
 #empty { background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; padding: 40px 32px; max-width: 46em; }
@@ -335,6 +340,7 @@ button.ghost { background: transparent; color: var(--accent); padding: 5px 12px;
               <input id="pg-temp" type="number" min="0" max="2" step="0.1" value="0.8">
             </label>
           </div>
+          <p id="pg-gpu-warning" class="warn" hidden>有训练正在进行。选 GPU 会和它抢显存，训练可能变得很慢。</p>
           <button id="pg-go" type="submit">生成</button>
         </form>
         <div id="pg-results" class="pg-results">
@@ -398,7 +404,7 @@ const isBaseline = (name) => name.startsWith("baseline");
 
 // ---------- 状态 ----------
 const state = {
-  runs: [], run: null, baseline: null,
+  runs: [], runsLoaded: false, run: null, baseline: null,
   metrics: new Map(),   // run → 指标数组（增量追加）
   overview: new Map(),  // run → {eval, growth, params}
   samples: [], samplesRun: null, showAll: false,
@@ -421,6 +427,7 @@ async function refresh() {
   let ok = true;
   try {
     state.runs = await getJSON("/api/runs");
+    state.runsLoaded = true;
   } catch (e) {
     ok = false;
   }
@@ -429,9 +436,15 @@ async function refresh() {
   // 状态栏跟着正在看的这次训练走；后台另外告诉我们现在在训练的是哪一个
   const statusUrl = run ? "/api/status?run=" + encodeURIComponent(run) : "/api/status";
   const jobs = [getJSON(statusUrl).then((s) => { state.status = s; })];
-  if (run) {
+  const summary = state.runs.find((r) => r.name === run);
+  if (run && !(summary && summary.error)) {  // 日志读不出来的 run 不去取它的数据，原因写在标题那句话里
     const base = `/api/runs/${encodeURIComponent(run)}`;
-    const have = state.metrics.get(run) || [];
+    let have = state.metrics.get(run) || [];
+    if (summary && have.length && summary.global_step < have[have.length - 1].global_step) {
+      // 训练从更早的检查点接着跑了（或这个 run 被删了重建）：缓存里后半段已经作废，整份重取
+      state.metrics.delete(run);
+      have = [];
+    }
     const since = have.length ? have[have.length - 1].global_step : -1;
     jobs.push(getJSON(`${base}/metrics?since=${since}`).then((rows) => {
       const cur = state.metrics.get(run) || [];
@@ -454,14 +467,16 @@ async function refresh() {
 
 function render() {
   $("conn").textContent = state.connected ? "" : "连接中断，正在重试";
-  const empty = state.runs.length === 0;
-  $("empty").hidden = !empty;
-  $("content").hidden = empty;
-  $("run-label").hidden = empty;  // 没有训练可选时不摆一个空的下拉框
-  $("run-select").hidden = empty;
-  if (empty) return;
+  const hasRuns = state.runs.length > 0;
+  // 只有后台明确回答"一个都没有"才说还没有训练记录；连不上后台不算
+  $("empty").hidden = !(state.runsLoaded && !hasRuns);
+  $("content").hidden = !hasRuns;
+  $("run-label").hidden = !hasRuns;  // 没有训练可选时不摆一个空的下拉框
+  $("run-select").hidden = !hasRuns;
+  if (!hasRuns) return;
   renderRunSelect();
   renderActiveHint();
+  renderGpuWarning();
   renderLede();
   renderLegend();
   renderCharts();
@@ -515,7 +530,9 @@ function renderLede() {
   const who = r.name === "heimi" ? "黑米" : r.name + " ";  // 中文名后面不空格，英文 run 名后面空一格
   const stage = r.stages.find((s) => s.name === r.stage);
   let text;
-  if (!stage || stage.params == null) {
+  if (r.error) {
+    text = `${who}的日志读不出来：${r.error}。修好或移走那个文件后，这里会自己恢复。`;
+  } else if (!stage || stage.params == null) {
     text = `${who}还没有开始训练。`;
   } else {
     text = `${who}现在有 ${fmtParams(stage.params)} 个参数，读过 ${fmtCount(r.tokens_total)} 个 token，正处在 ${r.stage} 阶段。`;
@@ -964,6 +981,13 @@ function renderCheckpointOptions() {
 }
 
 $("pg-compare").addEventListener("change", (e) => { $("pg-ckpt2-field").hidden = !e.target.checked; });
+
+// 显存是训练的：有训练在跑时选 GPU，先提醒一句
+function renderGpuWarning() {
+  const s = state.status;
+  $("pg-gpu-warning").hidden = !($("pg-device").value === "cuda" && s && s.active_state === "running");
+}
+$("pg-device").addEventListener("change", renderGpuWarning);
 
 function paneFor(target) {
   const option = [...$("pg-ckpt").options].find((o) => o.value === target);

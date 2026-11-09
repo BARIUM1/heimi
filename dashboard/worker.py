@@ -4,6 +4,10 @@
 也不能和训练进程共享任何状态。最多缓存 2 个模型，并排比较正好两个。
 一次请求超过 timeout_s 没回话就把进程杀掉：卡住的生成不该让后面的请求排在一个死进程后面，
 下一次请求会起一个新进程。
+
+显存是训练的：检查点一律先在 CPU 上加载（里面还有两倍于模型的优化器状态，不能跟着上显卡），
+只把模型搬到请求的设备；用过 GPU 的进程空闲 IDLE_EXIT_S 秒后整个退出，
+把模型和 CUDA 上下文占的显存一起还回去。只用 CPU 的进程不退，下次不用重新加载。
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from minids.train.checkpoint import load_model
 
 MAX_CACHED_MODELS = 2
 DEFAULT_TIMEOUT_S = 60.0
+IDLE_EXIT_S = 180.0  # 用过 GPU 的进程空闲这么久就退出，把显存还给训练
 DEFAULT_TOKENIZER = "data/tokenizer/heimi-16k.json"
 N_SPECIAL = 16  # id 小于它的是特殊 token，不属于生成的正文
 
@@ -47,13 +52,19 @@ class ModelCache:
     def __len__(self) -> int:
         return len(self._items)
 
+    @property
+    def uses_gpu(self) -> bool:
+        return any(str(key[2]).startswith("cuda") for key in self._items)
+
     def get(self, ckpt_path: str, device: str) -> tuple[Transformer, HeimiTokenizer]:
         path = Path(ckpt_path).resolve()
         key = (str(path), path.stat().st_mtime_ns, device)  # 文件被重写后修改时间变了，自动重新加载
         if key in self._items:
             self._items.move_to_end(key)
             return self._items[key]
-        model, meta = load_model(path, device)
+        model, meta = load_model(path, "cpu")  # 优化器状态留在内存里随即丢弃，不上显卡
+        if device != "cpu":
+            model = model.to(device)
         # 分词器路径记在检查点的配置快照里；相对路径相对仓库根目录
         tok_path = Path(((meta.get("ladder_config") or {}).get("data") or {}).get("tokenizer") or DEFAULT_TOKENIZER)
         if not tok_path.is_absolute():
@@ -95,11 +106,18 @@ def generate_text(cache: ModelCache, req: dict) -> dict:
     return {"text": text, "tokens": n_tokens, "seconds": round(time.perf_counter() - t0, 3)}
 
 
-def worker_main(conn, repo_root: str | None) -> None:
-    """子进程入口：收到 None 退出；每个请求回 {"ok": True, ...} 或 {"ok": False, "error": ...}，一次失败不带走进程。"""
+def worker_main(conn, repo_root: str | None, idle_exit_s: float = IDLE_EXIT_S) -> None:
+    """子进程入口：收到 None 退出；每个请求回 {"ok": True, ...} 或 {"ok": False, "error": ...}，一次失败不带走进程。
+
+    空闲 idle_exit_s 秒且占着显存时自己退出（窗口那一端下次请求会再起一个）。
+    """
     cache = ModelCache(repo_root=Path(repo_root) if repo_root else None)
     while True:
         try:
+            if not conn.poll(idle_exit_s):
+                if cache.uses_gpu:
+                    break
+                continue
             req = conn.recv()
         except (EOFError, OSError):
             break
@@ -147,20 +165,25 @@ class WorkerClient:
 
     def generate(self, req: dict) -> dict:
         with self._lock:  # 计时从拿到锁开始：排队等别的请求的时间不算
-            if not self.is_alive():
-                self._kill()
-                self._start()
-            try:
-                self._conn.send(req)
-                if not self._conn.poll(self.timeout_s):
+            reply = None
+            for attempt in (1, 2):
+                if not self.is_alive():
                     self._kill()
-                    raise WorkerTimeout(
-                        f"生成超过 {self.timeout_s:g} 秒没有完成，生成进程已重启；可以缩短输入、减少 token 数，或在不训练时改用 GPU"
-                    )
-                reply = self._conn.recv()
-            except (EOFError, BrokenPipeError, OSError) as e:
-                self._kill()
-                raise WorkerError(f"生成进程意外退出：{type(e).__name__}: {e}") from e
+                    self._start()
+                try:
+                    self._conn.send(req)
+                    if not self._conn.poll(self.timeout_s):
+                        self._kill()
+                        raise WorkerTimeout(
+                            f"生成超过 {self.timeout_s:g} 秒没有完成，生成进程已重启；可以缩短输入、减少 token 数，或在不训练时改用 GPU"
+                        )
+                    reply = self._conn.recv()
+                    break
+                except (EOFError, BrokenPipeError, OSError) as e:
+                    # 进程在收发之间没了：多半是空闲退出恰好撞上新请求，换一个新进程再试一次
+                    self._kill()
+                    if attempt == 2:
+                        raise WorkerError(f"生成进程意外退出：{type(e).__name__}: {e}") from e
         if not reply.get("ok"):
             raise WorkerError(reply.get("error", "未知错误"))
         return {k: v for k, v in reply.items() if k != "ok"}

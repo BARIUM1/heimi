@@ -6,6 +6,12 @@ run 名与检查点名来自 URL 和请求体，一律先过 safe_run_dir / safe
 
 训练状态分三档：最后一条记录在 RUNNING_WITHIN_S 秒内是"训练中"；超过但在 QUIET_WITHIN_S 内是
 "评测中或暂停"（级末评测最长约 20 分钟，期间不写指标）；再久就是"已停止"。
+
+训练进程只往日志末尾追加，从不回头改，所以日志里会有三种"重复"，都在这里收拾：
+- 中断后从更早的检查点恢复，同一段步数的指标写了两遍 → supersede_rewinds 只留后写的；
+- 同一级进了两次（头 500 步内被打断，没有检查点），增长事件与 stage_start 各有两条 → 按级去重；
+- 同一步有两条评测（级末评测加事后的 evaluate.py）→ 合并，新值覆盖旧值，空值不抹掉已有的。
+某个 run 的日志中间坏了一行（断电）只影响它自己：LogUnreadable 被就地接住，别的 run 照常。
 """
 
 from __future__ import annotations
@@ -29,6 +35,19 @@ _GROWTH_WORD = {"depth": "加深", "width": "加宽"}
 
 class RunNotFound(LookupError):
     """run 或检查点不存在，或名字不合规。接口层统一映射成 404。"""
+
+
+class LogUnreadable(RuntimeError):
+    """某个 run 的日志文件读不出来（中间有损坏的行）。只影响这一个 run。"""
+
+
+def read_log(run_dir: Path, name: str) -> list[dict]:
+    """读一个 run 的一份日志；坏文件抛 LogUnreadable（消息里带 run 名与文件名）。"""
+    run_dir = Path(run_dir)
+    try:
+        return read_jsonl(run_dir / name)
+    except (ValueError, OSError) as e:  # JSONDecodeError 与 UnicodeDecodeError 都是 ValueError
+        raise LogUnreadable(f"{run_dir.name}/{name} 读不出来，中间有损坏的行（{type(e).__name__}）") from e
 
 
 def safe_run_dir(runs_dir: Path, name: str) -> Path:
@@ -91,7 +110,7 @@ def last_update(run_dir: Path) -> datetime | None:
     """四个日志文件各自最后一条记录的 time 里最新的一个。"""
     times = []
     for name in LOG_FILES:
-        records = read_jsonl(Path(run_dir) / name)
+        records = read_log(run_dir, name)
         if records:
             t = _parse_time(records[-1].get("time"))
             if t is not None:
@@ -108,10 +127,9 @@ def _latest_progress(metrics: list[dict], events: list[dict]) -> dict | None:
     return e if e["global_step"] >= m["global_step"] else m
 
 
-def run_summary(run_dir: Path) -> dict:
-    run_dir = Path(run_dir)
-    metrics = read_jsonl(run_dir / METRICS_FILE)
-    events = read_jsonl(run_dir / EVENTS_FILE)
+def _summarize(run_dir: Path) -> dict:
+    metrics = read_log(run_dir, METRICS_FILE)
+    events = read_log(run_dir, EVENTS_FILE)
     ended = {e["stage"] for e in events if e["type"] == "stage_end"}
     stages: dict[str, dict] = {}
     for e in events:
@@ -136,6 +154,18 @@ def run_summary(run_dir: Path) -> dict:
     }
 
 
+def run_summary(run_dir: Path) -> dict:
+    """一个 run 的概况。日志读不出来时仍返回一条带 error 的概况，页面据此说明原因而不是整页空白。"""
+    run_dir = Path(run_dir)
+    try:
+        return _summarize(run_dir)
+    except LogUnreadable as e:
+        return {
+            "name": run_dir.name, "stages": [], "stage": None, "global_step": 0, "tokens_total": 0,
+            "last_update": None, "checkpoints": list_checkpoints(run_dir), "error": str(e),
+        }
+
+
 def list_runs(runs_dir: Path) -> list[dict]:
     """名字合规且至少有一个日志文件的子目录，按最近更新排在前。"""
     runs_dir = Path(runs_dir)
@@ -155,40 +185,62 @@ def list_runs(runs_dir: Path) -> list[dict]:
     return out
 
 
-def overview(run_dir: Path) -> dict:
-    """成长总览的三组序列：去重后的评测点、带标注的增长事件、参数量阶梯。"""
-    run_dir = Path(run_dir)
-    evals = read_jsonl(run_dir / EVAL_FILE)
-    events = read_jsonl(run_dir / EVENTS_FILE)
-    metrics = read_jsonl(run_dir / METRICS_FILE)
+def supersede_rewinds(records: list[dict]) -> list[dict]:
+    """去掉被"回退重写"作废的记录：后写的一条 global_step 不比前面大，说明训练从更早的检查点接着跑了，
+    前面那些步数不小于它的记录属于被放弃的那一段。结果按 global_step 严格递增。"""
+    out: list[dict] = []
+    for r in records:
+        gs = r.get("global_step", 0)
+        while out and out[-1].get("global_step", 0) >= gs:
+            out.pop()
+        out.append(r)
+    return out
 
-    # 级末评测与 evaluate.py 重算会在同一步留下两条记录：留最后一条
-    latest_eval: dict[tuple, dict] = {}
+
+def metrics_since(run_dir: Path, since: int | None = None) -> list[dict]:
+    """训练指标，去掉回退作废的段；since 给出时只要 global_step 更大的。"""
+    rows = supersede_rewinds(read_log(run_dir, METRICS_FILE))
+    return rows if since is None else [r for r in rows if r.get("global_step", 0) > since]
+
+
+def merged_evals(evals: list[dict]) -> list[dict]:
+    """同一级同一步的评测合并成一条（后写的非空值覆盖先写的，空值不抹掉已有的），按进度排序。"""
+    merged: dict[tuple, dict] = {}
     for e in evals:
-        latest_eval[(e["stage"], e["global_step"])] = e
-    eval_out = sorted(
-        ({k: e.get(k) for k in _EVAL_KEYS} for e in latest_eval.values()),
-        key=lambda e: (e["tokens_total"], e["global_step"]),
-    )
+        key = (e["stage"], e["global_step"])
+        if key in merged:
+            merged[key] = {**merged[key], **{k: v for k, v in e.items() if v is not None}}
+        else:
+            merged[key] = dict(e)
+    return sorted(merged.values(), key=lambda e: (e["tokens_total"], e["global_step"]))
 
-    growth = []
+
+def overview(run_dir: Path) -> dict:
+    """成长总览的三组序列：合并后的评测点、带标注的增长事件、参数量阶梯。"""
+    run_dir = Path(run_dir)
+    evals = read_log(run_dir, EVAL_FILE)
+    events = read_log(run_dir, EVENTS_FILE)
+    metrics = read_log(run_dir, METRICS_FILE)
+
+    eval_out = [{k: e.get(k) for k in _EVAL_KEYS} for e in merged_evals(evals)]
+
+    # 同一级进了两次时增长事件与 stage_start 各有两条：按级留最后一条
+    growth_by_stage: dict[str, dict] = {}
+    start_by_stage: dict[str, dict] = {}
     for e in events:
-        if e["type"] != "growth":
-            continue
-        d = e["data"]
-        growth.append({
-            "tokens_total": e["tokens_total"],
-            "kind": d["kind"],
-            "params_before": d["params_before"],
-            "params_after": d["params_after"],
-            "label": f"{format_params(d['params_before'])} → {format_params(d['params_after'])} {_GROWTH_WORD.get(d['kind'], d['kind'])}",
-        })
-
-    params = [
-        {"tokens_total": e["tokens_total"], "params": e["data"]["params_non_embedding"]}
-        for e in events
-        if e["type"] == "stage_start" and "params_non_embedding" in e["data"]
-    ]
+        if e["type"] == "growth":
+            d = e["data"]
+            growth_by_stage[e["stage"]] = {
+                "tokens_total": e["tokens_total"],
+                "kind": d["kind"],
+                "params_before": d["params_before"],
+                "params_after": d["params_after"],
+                "label": f"{format_params(d['params_before'])} → {format_params(d['params_after'])} {_GROWTH_WORD.get(d['kind'], d['kind'])}",
+            }
+        elif e["type"] == "stage_start" and "params_non_embedding" in e["data"]:
+            start_by_stage[e["stage"]] = {"tokens_total": e["tokens_total"], "params": e["data"]["params_non_embedding"]}
+    growth = list(growth_by_stage.values())
+    params = list(start_by_stage.values())
     if params:  # 把阶梯延伸到当前进度，最后一级才不是一个孤点
         current = max((r["tokens_total"] for r in (*metrics, *evals, *events)), default=0)
         if current > params[-1]["tokens_total"]:
@@ -232,14 +284,17 @@ def eta_seconds(metrics: list[dict], events: list[dict]) -> float | None:
 
 
 def _newest_run(runs_dir: Path) -> tuple[datetime, Path] | None:
-    """最近写过日志的那个 run：它就是"现在在训练的"候选。"""
+    """最近写过日志的那个 run：它就是"现在在训练的"候选。读不出来的 run 跳过。"""
     runs_dir = Path(runs_dir)
     if not runs_dir.is_dir():
         return None
     best: tuple[datetime, Path] | None = None
     for d in runs_dir.iterdir():
         if d.is_dir() and RUN_NAME_RE.match(d.name):
-            t = last_update(d)
+            try:
+                t = last_update(d)
+            except LogUnreadable:
+                continue
             if t is not None and (best is None or t.timestamp() > best[0].timestamp()):
                 best = (t, d)
     return best
@@ -249,7 +304,7 @@ def status(runs_dir: Path, now: datetime | None = None, run: str | None = None) 
     """某个 run 的当前状态：给了 run 就报它（页面正在看的那个），否则报最近更新的。
 
     无论报哪个，active_run / active_state 都指最近更新的那个，页面据此提示"现在在训练的是谁"。
-    没有任何 run 时各数值为 None。
+    没有任何 run 时各数值为 None；所选 run 的日志读不出来时带一个 error 说明。
     """
     now = now or datetime.now().astimezone()
     out: dict = {
@@ -266,22 +321,28 @@ def status(runs_dir: Path, now: datetime | None = None, run: str | None = None) 
         out["active_state"] = training_state(newest[0], now)
     if run is not None:
         run_dir = safe_run_dir(Path(runs_dir), run)
-        updated = last_update(run_dir)
     elif newest is not None:
-        updated, run_dir = newest
+        run_dir = newest[1]
     else:
         return out
+    out["run"] = run_dir.name
 
-    metrics = read_jsonl(run_dir / METRICS_FILE)
-    events = read_jsonl(run_dir / EVENTS_FILE)
-    evals = read_jsonl(run_dir / EVAL_FILE)
+    try:
+        updated = last_update(run_dir)
+        metrics = read_log(run_dir, METRICS_FILE)
+        events = read_log(run_dir, EVENTS_FILE)
+        evals = merged_evals(read_log(run_dir, EVAL_FILE))
+    except LogUnreadable as e:
+        out["error"] = str(e)
+        return out
+
     latest = _latest_progress(metrics, events)
     state = training_state(updated, now)
     out.update({
-        "run": run_dir.name, "state": state, "running": state == "running",
+        "state": state, "running": state == "running",
         "last_update": updated.isoformat(timespec="seconds") if updated else None,
         "seconds_since_update": (now - updated).total_seconds() if updated else None,
-        "last_eval": evals[-1] if evals else None,
+        "last_eval": evals[-1] if evals else None,  # 按进度最靠后的那次，不是最后写进文件的那条
         "eta_seconds": eta_seconds(metrics, events),
     })
     if latest is not None:
