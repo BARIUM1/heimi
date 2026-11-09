@@ -45,10 +45,7 @@ class Transformer(nn.Module):
         _, T = idx.shape
         if T > self.cfg.seq_len:
             raise ValueError(f"sequence length {T} exceeds seq_len {self.cfg.seq_len}")
-        if idx.numel() > 0:
-            max_id = int(idx.max())
-            if max_id >= self.cfg.vocab_size:
-                raise ValueError(f"token id {max_id} is out of range for vocab_size {self.cfg.vocab_size}")
+        self._check_token_range(idx, targets)
 
         cos, sin = self.rope_cos[:T], self.rope_sin[:T]
         x = self.tok_emb(idx)
@@ -60,6 +57,26 @@ class Transformer(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)).float(), targets.reshape(-1))
         return logits, loss
+
+    def _check_token_range(self, idx: LongTensor, targets: LongTensor | None) -> None:
+        """idx 和 targets 的上下界一起检查，只做一次 GPU 同步。
+
+        越界的 id 在 CUDA 上会触发 device-side assert 直接杀掉进程，
+        损坏的数据分片必须在这里被拦成一个清楚的 ValueError。
+        """
+        parts = []
+        if idx.numel() > 0:
+            parts += [idx.min(), idx.max()]
+        if targets is not None and targets.numel() > 0:
+            parts += [targets.min(), targets.max()]
+        if not parts:
+            return
+        bounds = torch.stack(parts).tolist()
+        lo, hi = min(bounds[0::2]), max(bounds[1::2])
+        if lo < 0 or hi >= self.cfg.vocab_size:
+            raise ValueError(
+                f"token id out of range: min {lo}, max {hi}, vocab_size {self.cfg.vocab_size}"
+            )
 
     @torch.no_grad()
     def generate(

@@ -32,8 +32,20 @@ def test_too_long_sequence_raises(tiny_cfg):
 
 
 def test_out_of_range_token_raises(tiny_cfg):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="256"):
         Transformer(tiny_cfg)(torch.tensor([[0, 256]]))
+
+
+def test_negative_token_raises(tiny_cfg):
+    with pytest.raises(ValueError, match="-1"):
+        Transformer(tiny_cfg)(torch.tensor([[0, -1]]))
+
+
+def test_out_of_range_target_raises(tiny_cfg):
+    # targets 的最后一列不在 idx 里，损坏的分片会从这里漏进 cross_entropy
+    m = Transformer(tiny_cfg)
+    with pytest.raises(ValueError, match="256"):
+        m(torch.tensor([[0, 1]]), targets=torch.tensor([[1, 256]]))
 
 
 def test_generate_length_and_greedy(tiny_cfg):
