@@ -72,7 +72,7 @@ def test_short_shard_excluded_with_warning(tmp_path):
     with pytest.warns(UserWarning, match="s.bin"):
         ss = ShardSet([short, ok], [5, 50], min_tokens=9)
     assert ss.total_tokens == 50
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError), pytest.warns(UserWarning):
         ShardSet([short], [5], min_tokens=9)
 
 
