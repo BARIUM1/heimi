@@ -92,16 +92,17 @@ def read_jsonl(path: Path, since_global_step: int | None = None) -> list[dict]:
     path = Path(path)
     if not path.exists():
         return []
-    lines = path.read_text(encoding="utf-8").split("\n")
+    # 按字节切行再逐行解码：末行可能恰好断在一个多字节字符中间，整体解码会直接 UnicodeDecodeError
+    lines = path.read_bytes().split(b"\n")
     while lines and not lines[-1].strip():
         lines.pop()
     out: list[dict] = []
-    for i, line in enumerate(lines):
-        if not line.strip():
+    for i, raw in enumerate(lines):
+        if not raw.strip():
             continue
         try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
+            rec = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
             if i == len(lines) - 1:
                 break  # 写了一半的末行
             raise

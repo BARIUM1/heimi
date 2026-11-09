@@ -53,7 +53,7 @@ python complete.py --model models/heimi-stage0 --prefix-file prefix.txt --suffix
 | 增长点前后损失 | 级 0 末步 4.3614 → 级 1 第 10 步 4.3397（第 20 步 4.3851，预热中学习率在升） |
 | 吞吐 | 104k 到 109k token/s（基准 133k，见观察 1） |
 | 峰值显存（reserved） | 11.35 GB |
-| 计数连续性 | `global_step` 572 → 582，`tokens_total` 299,892,736 → 305,135,616 |
+| 计数连续性 | `global_step` 572 → 592，`tokens_total` 299,892,736 → 310,378,496（每步 +524,288） |
 | 检查点 | `stage1_step20.pt`（`reason: max_steps`）；再跑 `train.py --run heimi` 会从它恢复 |
 
 ## 工具链

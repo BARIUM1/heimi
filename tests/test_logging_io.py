@@ -53,6 +53,15 @@ def test_half_written_last_line_is_skipped(tmp_path):
     assert [r["step"] for r in read_jsonl(p)] == [1]
 
 
+def test_last_line_torn_inside_a_multibyte_character_is_skipped(tmp_path):
+    # 训练进程写 "黑米" 写到一半，窗口恰好来读：不能抛 UnicodeDecodeError
+    p = tmp_path / METRICS_FILE
+    append_jsonl(p, _metrics(1))
+    with p.open("ab") as f:
+        f.write('{"stage": "s0", "step": 2, "note": "黑'.encode("utf-8")[:-1])
+    assert [r["step"] for r in read_jsonl(p)] == [1]
+
+
 def test_unknown_event_type_rejected():
     with pytest.raises(ValueError, match="type"):
         EventRecord("exploded", "s0", 0, 0, now_iso())

@@ -2,11 +2,14 @@
 
 一个优化步消耗 tokens_per_step 个 token，由 accum_steps 个微步累积；加载器的 step 参数是跨级累计的
 micro_step，恢复后取到的数据序列与未中断时一致；学习率是本级 step 的纯函数。每级结束写 <stage>_final.pt，
-再次运行时已有 final 的级直接跳过；有中间检查点的级从它恢复。
+再次运行时已有 final 的级直接跳过；有中间检查点的级从它恢复（最新的那个读不出来就退到更早的一个）。
 
-四种中止（spec 14）：损失非有限 → nan_abort；CUDA OOM 或第一步后 reserved 显存超过预算（Windows 上
-超限不报错而是溢出到系统内存）→ oom；增长验证失败由 grow_for_stage 抛出；torch.compile 首次前向失败 →
-compile_fallback 后用普通模式继续，不中止。
+检查点总是先于同一步的评测与采样写盘：评测（HellaSwag、上千次生成）是最长、最陌生的代码路径，
+它崩了不能连带丢掉几十分钟训练。级末也先存一个步检查点，再评测，最后写 _final.pt。
+
+四种中止（spec 14）：损失或梯度范数非有限 → nan_abort（梯度在 opt.step 之前查，NaN 权重绝不落盘）；
+CUDA OOM（整级任何位置）或第一步后 reserved 显存超过预算（Windows 上超限不报错而是溢出到系统内存）→ oom；
+增长验证失败由 grow_for_stage 抛出；torch.compile 首次前向失败 → compile_fallback 后用普通模式继续，不中止。
 """
 
 from __future__ import annotations
@@ -30,9 +33,10 @@ from minids.logging_io import EvalRecord, MetricsRecord, RunLogger, SampleRecord
 from minids.memguard import cuda_memory_snapshot, exceeds_memory_budget
 from minids.model.transformer import Transformer
 from minids.train.checkpoint import (
+    CheckpointError,
     TrainState,
     checkpoint_name,
-    latest_step_checkpoint,
+    list_step_checkpoints,
     load_checkpoint,
     load_model,
     prune_step_checkpoints,
@@ -124,12 +128,24 @@ def _make_loader(run: _Run, stage: StageConfig) -> MixedLoader:
     return MixedLoader(sets, stage.mix, batch_size=stage.micro_batch, seq_len=cfg.seq_len, seed=cfg.seed, vocab_size=run.vocab_size)
 
 
+def _load_latest_resumable(run: _Run, stage: StageConfig) -> tuple[Path, dict] | None:
+    """最新的能读出来的中间检查点；读不出来的（断电截断等）改名为 .corrupt 后退到更早的。"""
+    for path in reversed(list_step_checkpoints(run.ckpt_dir, stage.name)):
+        try:
+            return path, load_checkpoint(path, run.device)
+        except CheckpointError as e:
+            bad = path.with_name(path.name + ".corrupt")
+            path.replace(bad)
+            log.warning("%s；已改名为 %s，改用更早的检查点", e, bad.name)
+    return None
+
+
 def _enter_stage(run: _Run, stage: StageConfig, prev_stage: StageConfig | None, steps: int, accum: int):
     """返回 (model, optimizer, state)：恢复中间检查点，或从零/从前一级增长进入新一级。"""
     cfg = run.cfg
-    latest = latest_step_checkpoint(run.ckpt_dir, stage.name)
-    if latest is not None:
-        payload = load_checkpoint(latest, run.device)
+    found = _load_latest_resumable(run, stage)
+    if found is not None:
+        latest, payload = found
         if payload["model_config"] != stage.model.to_dict():
             raise ValueError(
                 f"检查点 {latest.name} 的 model_config 与级 {stage.name} 的配置不一致：{payload['model_config']} ≠ {stage.model.to_dict()}"
@@ -223,10 +239,40 @@ def _save_step(run: _Run, stage: StageConfig, model: Transformer, opt, state: Tr
     prune_step_checkpoints(run.ckpt_dir, stage.name, run.cfg.keep_checkpoints)
 
 
+def _abort_nan(run: _Run, stage: StageConfig, state: TrainState, what: str, value: float) -> None:
+    run.logger.event("nan_abort", stage.name, state.global_step, state.tokens_total, what=what, value=value, step=state.step + 1)
+    raise TrainingAborted(
+        f"nan_abort：级 {stage.name} 第 {state.step + 1} 步{what}为 {value}；权重未更新也未存盘，"
+        f"重跑同一命令会从最近检查点恢复，仍不行就调低该级 lr"
+    )
+
+
+def _abort_oom(run: _Run, stage: StageConfig, state: TrainState | None, hint: str, **data) -> None:
+    gs = state.global_step if state else 0
+    tt = state.tokens_total if state else 0
+    run.logger.event("oom", stage.name, gs, tt, hint=hint, **data)
+    raise TrainingAborted("oom：" + hint)
+
+
 def _run_stage(run: _Run, stage: StageConfig, prev_stage: StageConfig | None) -> None:
+    state: TrainState | None = None
+    try:
+        state = _train_stage(run, stage, prev_stage)
+    except torch.cuda.OutOfMemoryError as e:
+        hint = f"显存不足：把级 {stage.name} 的 micro_batch 从 {stage.micro_batch} 减半，梯度累积会自动补回每步 token 数"
+        _abort_oom(run, stage, state if state else _state_holder.get("state"), hint, error=str(e)[:200])
+
+
+# _train_stage 把正在用的 TrainState 放进来，OOM 发生在训练循环里时事件也能带上正确的步数
+_state_holder: dict[str, TrainState] = {}
+
+
+def _train_stage(run: _Run, stage: StageConfig, prev_stage: StageConfig | None) -> TrainState:
     cfg, device = run.cfg, run.device
     steps, accum = cfg.steps_for(stage), cfg.accum_steps(stage)
+    _state_holder.pop("state", None)
     model, opt, state = _enter_stage(run, stage, prev_stage, steps, accum)
+    _state_holder["state"] = state
     fwd = _maybe_compile(run, model, stage, state)
     loader = _make_loader(run, stage)
     cuda = _is_cuda(device)
@@ -243,40 +289,34 @@ def _run_stage(run: _Run, stage: StageConfig, prev_stage: StageConfig | None) ->
         for g in opt.param_groups:
             g["lr"] = lr
         loss_acc = torch.zeros((), device=device)
-        try:
-            for _ in range(accum):
-                x, y = loader.get_batch(state.micro_step)
-                x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-                try:
-                    with _autocast(device):
-                        _, loss = fwd(x, y)
-                except torch.cuda.OutOfMemoryError:
+        for _ in range(accum):
+            x, y = loader.get_batch(state.micro_step)
+            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+            try:
+                with _autocast(device):
+                    _, loss = fwd(x, y)
+            except torch.cuda.OutOfMemoryError:
+                raise
+            except Exception as e:  # noqa: BLE001 —— 编译后的模型常在首次前向才暴露工具链缺失
+                if fwd is model:
                     raise
-                except Exception as e:  # noqa: BLE001 —— 编译后的模型常在首次前向才暴露工具链缺失
-                    if fwd is model:
-                        raise
-                    run.logger.event("compile_fallback", stage.name, state.global_step, state.tokens_total, error=f"{type(e).__name__}: {str(e)[:200]}")
-                    log.warning("编译模式首次前向失败，改用普通模式：%s", e)
-                    fwd = model
-                    with _autocast(device):
-                        _, loss = fwd(x, y)
-                (loss / accum).backward()
-                loss_acc = loss_acc + loss.detach()
-                state.micro_step += 1
-                state.tokens_stage += tokens_per_micro
-                state.tokens_total += tokens_per_micro
-        except torch.cuda.OutOfMemoryError as e:
-            hint = f"显存不足：把级 {stage.name} 的 micro_batch 从 {stage.micro_batch} 减半，梯度累积会自动补回每步 token 数"
-            run.logger.event("oom", stage.name, state.global_step, state.tokens_total, hint=hint, error=str(e)[:200])
-            raise TrainingAborted("oom：" + hint) from e
+                run.logger.event("compile_fallback", stage.name, state.global_step, state.tokens_total, error=f"{type(e).__name__}: {str(e)[:200]}")
+                log.warning("编译模式首次前向失败，改用普通模式：%s", e)
+                fwd = model
+                with _autocast(device):
+                    _, loss = fwd(x, y)
+            (loss / accum).backward()
+            loss_acc = loss_acc + loss.detach()
+            state.micro_step += 1
+            state.tokens_stage += tokens_per_micro
+            state.tokens_total += tokens_per_micro
 
         loss_val = (loss_acc / accum).item()
         if not math.isfinite(loss_val):
-            run.logger.event("nan_abort", stage.name, state.global_step, state.tokens_total, loss=loss_val, step=state.step + 1)
-            raise TrainingAborted(
-                f"nan_abort：级 {stage.name} 第 {state.step + 1} 步损失为 {loss_val}；重跑同一命令会从最近检查点恢复，仍不行就调低该级 lr"
-            )
+            _abort_nan(run, stage, state, "损失", loss_val)
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0).item()
+        if not math.isfinite(grad_norm):  # 损失有限但 bf16 反向溢出：在 opt.step 之前拦住，NaN 权重不进检查点
+            _abort_nan(run, stage, state, "梯度范数", grad_norm)
         opt.step()
         opt.zero_grad(set_to_none=True)
         state.step += 1
@@ -289,9 +329,7 @@ def _run_stage(run: _Run, stage: StageConfig, prev_stage: StageConfig | None) ->
             if exceeds_memory_budget(snap["reserved_gb"], snap["total_gb"], cfg.max_mem_frac):
                 hint = (f"第一步后 reserved 显存 {snap['reserved_gb']:.1f} GB 超过物理显存 {snap['total_gb']:.1f} GB 的 "
                         f"{cfg.max_mem_frac:.0%}，Windows 上会溢出到系统内存变得极慢：把级 {stage.name} 的 micro_batch 减半")
-                run.logger.event("oom", stage.name, state.global_step, state.tokens_total,
-                                 reserved_gb=round(snap["reserved_gb"], 2), total_gb=round(snap["total_gb"], 2), hint=hint)
-                raise TrainingAborted("oom：" + hint)
+                _abort_oom(run, stage, state, hint, reserved_gb=round(snap["reserved_gb"], 2), total_gb=round(snap["total_gb"], 2))
 
         is_last = state.step == steps
         if state.step % cfg.log_interval == 0 or is_last:
@@ -309,23 +347,33 @@ def _run_stage(run: _Run, stage: StageConfig, prev_stage: StageConfig | None) ->
             ))
             log.info("%s %d/%d loss %.4f lr %.2e gnorm %.2f %.0f tok/s %.1f GB", stage.name, state.step, steps, loss_val, lr, grad_norm, tok_per_s, mem_gb)
             t_log, tokens_at_log = now, state.tokens_total
-        if state.step % cfg.eval.interval == 0 or is_last:
-            _evaluate(run, stage, model, state, final=is_last)
-        if state.step % cfg.eval.sample_interval == 0 or is_last:
-            _sample(run, stage, model, state)
+
+        if is_last:
+            break  # 级末的存档、评测、采样在循环外按固定顺序做
 
         if run.remaining is not None:
             run.remaining -= 1
-        budget_hit = run.remaining is not None and run.remaining <= 0 and not is_last
-        if budget_hit or (state.step % cfg.ckpt_interval == 0 and not is_last):
+        budget_hit = run.remaining is not None and run.remaining <= 0
+        # 先存档再评测：评测是最长的代码路径，它崩了不能连带丢掉这段训练
+        if budget_hit or state.step % cfg.ckpt_interval == 0:
             _save_step(run, stage, model, opt, state, reason="max_steps" if budget_hit else "interval")
+        if state.step % cfg.eval.interval == 0:
+            _evaluate(run, stage, model, state, final=False)
+        if state.step % cfg.eval.sample_interval == 0:
+            _sample(run, stage, model, state)
         if budget_hit:
             log.info("--max-steps 用完，已保存检查点，退出")
             raise _BudgetExhausted
 
+    if run.remaining is not None:
+        run.remaining -= 1
+    _save_step(run, stage, model, opt, state, reason="stage_end")  # 级末评测前先落盘，评测崩了重跑直接接到这里
+    _evaluate(run, stage, model, state, final=True)
+    _sample(run, stage, model, state)
     save_checkpoint(run.ckpt_dir / checkpoint_name(stage.name, None), model, opt, state, cfg.to_dict())
     run.logger.event(
         "stage_end", stage.name, state.global_step, state.tokens_total,
         loss_last=loss_last, params_non_embedding=model.count_params(), seconds=round(time.perf_counter() - stage_t0, 1),
     )
     log.info("级 %s 完成：%d 步，末步损失 %.4f，用时 %.0f 秒", stage.name, state.step, loss_last, time.perf_counter() - stage_t0)
+    return state

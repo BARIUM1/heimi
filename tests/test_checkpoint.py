@@ -68,6 +68,25 @@ def test_latest_is_numeric_not_lexical(tmp_path):
     assert latest_step_checkpoint(tmp_path, "s2") is None
 
 
+def test_prune_survives_a_file_locked_by_another_process(tmp_path, monkeypatch):
+    # Windows 上别的进程（窗口的生成工作进程）正在读最旧的检查点时 unlink 会 PermissionError，训练不能因此死掉
+    from pathlib import Path
+
+    for n in (100, 200, 300):
+        (tmp_path / f"s0_step{n}.pt").write_bytes(b"x")
+    real_unlink = Path.unlink
+
+    def locked_unlink(self, *a, **k):
+        if self.name == "s0_step100.pt":
+            raise PermissionError(32, "另一个程序正在使用此文件")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", locked_unlink)
+    deleted = prune_step_checkpoints(tmp_path, "s0", keep=1)
+    assert [p.name for p in deleted] == ["s0_step200.pt"]
+    assert (tmp_path / "s0_step100.pt").exists() and (tmp_path / "s0_step300.pt").exists()
+
+
 def test_prune_keeps_newest_and_final_and_other_stages(tmp_path):
     for n in (100, 200, 300, 400):
         (tmp_path / f"s0_step{n}.pt").write_bytes(b"x")

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import subprocess
@@ -18,6 +19,8 @@ import torch
 from minids.config import ModelConfig
 from minids.logging_io import now_iso
 from minids.model.transformer import Transformer
+
+log = logging.getLogger(__name__)
 
 
 class CheckpointError(RuntimeError):
@@ -70,6 +73,11 @@ def _step_checkpoints(ckpt_dir: Path, stage: str) -> list[tuple[int, Path]]:
     return sorted(found)
 
 
+def list_step_checkpoints(ckpt_dir: Path, stage: str) -> list[Path]:
+    """该级的中间检查点路径，按步数升序（最新在最后）。"""
+    return [p for _, p in _step_checkpoints(ckpt_dir, stage)]
+
+
 def save_checkpoint(
     path: Path,
     model: Transformer,
@@ -91,7 +99,10 @@ def save_checkpoint(
         "saved_at": now_iso(),
     }
     tmp = path.with_suffix(".tmp")
-    torch.save(payload, tmp)
+    with open(tmp, "wb") as f:
+        torch.save(payload, f)
+        f.flush()
+        os.fsync(f.fileno())  # 数据真正落盘后再改名，断电不会留下名字正确但内容截断的检查点
     os.replace(tmp, path)
 
 
@@ -122,11 +133,19 @@ def latest_step_checkpoint(ckpt_dir: Path, stage: str) -> Path | None:
 
 
 def prune_step_checkpoints(ckpt_dir: Path, stage: str, keep: int) -> list[Path]:
-    """只留该级最新的 keep 个中间检查点，不碰 _final 与其他级；返回删掉的路径。"""
+    """只留该级最新的 keep 个中间检查点，不碰 _final 与其他级；返回删掉的路径。
+
+    Windows 上别的进程（窗口的生成工作进程）正读着某个文件时 unlink 会 PermissionError，
+    这种文件跳过并记日志，下次清理再试，训练不能因此死掉。
+    """
     found = _step_checkpoints(ckpt_dir, stage)
     victims = found[: max(0, len(found) - keep)]
     deleted = []
     for _, p in victims:
-        p.unlink()
+        try:
+            p.unlink()
+        except OSError as e:
+            log.warning("删除旧检查点 %s 失败（可能正被其他进程读取），下次再试：%s", p.name, e)
+            continue
         deleted.append(p)
     return deleted
