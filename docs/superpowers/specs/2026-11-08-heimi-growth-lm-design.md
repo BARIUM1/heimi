@@ -1,8 +1,8 @@
-# 小竹（Bamboo）设计文档：可渐进增长的迷你 DeepSeek 风格语言模型
+# 黑米（Heimi）设计文档：可渐进增长的迷你 DeepSeek 风格语言模型
 
 日期：2026-11-08
 状态：待用户审阅
-工作名：小竹 / Bamboo（最终名称由用户在候选中选定，全文替换即可）
+名称：黑米 / Heimi，以用户家的猫命名
 
 ## 1. 目标与范围
 
@@ -285,7 +285,7 @@ DeepSeek-V2-Lite 去掉 MoE 的稠密版本：
 
 ### 9.1 运行方式
 
-- `python train.py --config configs/ladder.yaml --run bamboo`：按顺序执行全部阶段。存在检查点时自动续训，包括从上一级末尾自动执行增长进入下一级。
+- `python train.py --config configs/ladder.yaml --run heimi`：按顺序执行全部阶段。存在检查点时自动续训，包括从上一级末尾自动执行增长进入下一级。
 - `--stage <name>` 只跑指定阶段（要求前一阶段的最终检查点存在）。
 - `python train.py --config configs/baseline105m.yaml --run baseline105m`。
 
@@ -319,8 +319,8 @@ DeepSeek-V2-Lite 去掉 MoE 的稠密版本：
 
 - 数据配比 web 0.20 / code 0.80，FIM 比例 50%，峰值学习率 2e-4，0.7B token。
 - 交付：
-  1. `runs/bamboo/ckpt/task_final.pt`。
-  2. `python export.py --ckpt ... --out models/bamboo-105m/`：导出 `model.safetensors`、`config.json`、分词器文件，供不带训练代码的推理使用。
+  1. `runs/heimi/ckpt/task_final.pt`。
+  2. `python export.py --ckpt ... --out models/heimi-105m/`：导出 `model.safetensors`、`config.json`、分词器文件，供不带训练代码的推理使用。
   3. `complete.py`：`--prefix-file`、`--suffix-file`（可选）、`--max-tokens`，输出中间内容到标准输出；也接受标准输入。默认 CPU，`--device cuda` 可切 GPU。
 
 ## 12. 窗口（Dashboard）
