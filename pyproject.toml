@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "minids"
+version = "0.1.0"
+description = "黑米 Heimi：可渐进增长的迷你 DeepSeek 风格语言模型"
+requires-python = ">=3.12,<3.13"
+dependencies = ["numpy>=1.26", "pyyaml>=6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["minids*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
