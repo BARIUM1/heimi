@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -22,9 +23,37 @@ from minids.model.transformer import Transformer
 
 log = logging.getLogger(__name__)
 
+# 目标文件被别的进程占用时（Windows 上替换会 PermissionError）重试的次数与间隔：合计 30 秒
+REPLACE_ATTEMPTS = 60
+REPLACE_DELAY_S = 0.5
+
 
 class CheckpointError(RuntimeError):
     pass
+
+
+def replace_with_retry(src: Path, dst: Path) -> None:
+    """os.replace，但目标正被别的进程占用时等它放开再试。
+
+    Windows 上别的进程开着目标文件（窗口的生成进程正在读这个检查点）时，替换会抛 PermissionError。
+    读一个检查点只占几秒，训练不该因此停下：每 REPLACE_DELAY_S 秒重试一次，
+    试满 REPLACE_ATTEMPTS 次还不行才报带文件名的 CheckpointError。
+    """
+    src, dst = Path(src), Path(dst)
+    last: PermissionError | None = None
+    for attempt in range(REPLACE_ATTEMPTS):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as e:
+            last = e
+            if attempt == 0:
+                log.warning("%s 正被其他程序占用，等它放开再写（最多 %.0f 秒）", dst.name, REPLACE_ATTEMPTS * REPLACE_DELAY_S)
+            time.sleep(REPLACE_DELAY_S)
+    raise CheckpointError(
+        f"检查点 {dst.name} 一直被其他程序占用，等了 {REPLACE_ATTEMPTS * REPLACE_DELAY_S:.0f} 秒仍无法写入；"
+        f"关掉正在读它的程序（比如训练窗口的试玩台）后重跑同一命令即可继续"
+    ) from last
 
 
 @dataclass
@@ -103,7 +132,7 @@ def save_checkpoint(
         torch.save(payload, f)
         f.flush()
         os.fsync(f.fileno())  # 数据真正落盘后再改名，断电不会留下名字正确但内容截断的检查点
-    os.replace(tmp, path)
+    replace_with_retry(tmp, path)
 
 
 def load_checkpoint(path: Path, device: str) -> dict:

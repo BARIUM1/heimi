@@ -40,6 +40,7 @@ from minids.train.checkpoint import (
     load_checkpoint,
     load_model,
     prune_step_checkpoints,
+    replace_with_retry,
     save_checkpoint,
 )
 from minids.train.config import LadderConfig, StageConfig
@@ -135,7 +136,7 @@ def _load_latest_resumable(run: _Run, stage: StageConfig) -> tuple[Path, dict] |
             return path, load_checkpoint(path, run.device)
         except CheckpointError as e:
             bad = path.with_name(path.name + ".corrupt")
-            path.replace(bad)
+            replace_with_retry(path, bad)  # 别的程序正占着它时等一等，而不是让恢复失败
             log.warning("%s；已改名为 %s，改用更早的检查点", e, bad.name)
     return None
 
