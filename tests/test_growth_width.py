@@ -1,7 +1,17 @@
 import torch
 
-from minids.growth.width import grow_width
+from minids.growth.width import break_symmetry, grow_width
 from minids.model.transformer import Transformer
+
+
+def test_break_symmetry_matches_fused_path(tiny_cfg):
+    # 计划三要按 spec 顺序"先精确验证再加噪"，所以加噪必须能单独调用，且与一步到位的结果一致
+    torch.manual_seed(0)
+    old = Transformer(tiny_cfg)
+    staged = grow_width(old, noise_std_rel=0.0)
+    break_symmetry(staged, 1e-3, torch.Generator().manual_seed(7))
+    fused = grow_width(old, noise_std_rel=1e-3, generator=torch.Generator().manual_seed(7))
+    assert all(torch.equal(a, b) for a, b in zip(staged.state_dict().values(), fused.state_dict().values()))
 
 
 def test_shapes_doubled(tiny_cfg):
