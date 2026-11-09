@@ -94,3 +94,11 @@ def test_from_index(tmp_path):
         encoding="utf-8",
     )
     assert ShardSet.from_index(idx, "web", "train", min_tokens=9).total_tokens == 30
+
+
+def test_shard_size_must_match_index(tmp_path):
+    # 文件实际大小与 index 不符：少了会在 Windows 上变成不带分片名的 OSError，多了会被 memmap 悄悄截断
+    p = write_shard(tmp_path / "web_0.bin", list(range(10, 30)))  # 实际 20 个 token
+    for claimed in (30, 10):
+        with pytest.raises(ValueError, match="web_0.bin"):
+            ShardSet([p], [claimed], 5)

@@ -143,4 +143,6 @@ FIM 样例：`MixedLoader({"code": ...}, MixConfig(web=0, code=1, fim_rate=1), b
   不会出错，只是略浪费 token。若以后要更严格，可在计划三之前对 code 加一个 ASCII 比例过滤；本计划不做。
 - **后台日志的中文乱码**：`prepare run` 在后台由 GBK 代码页的控制台捕获时日志中文变成乱码，分片与 `index.json` 不受影响。
   以后在后台跑时加 `PYTHONUTF8=1`。
+- **分词器只能经 `HeimiTokenizer.load` 加载**："字面特殊串按普通文本编码"这条规则不在 `heimi-16k.json` 里，直接 `tokenizers.Tokenizer.from_file` 会把文本里的 `<|endoftext|>` 识别成 id 0。审阅后已加载路径测试与模块说明。
+- **加载器会核对分片大小**：`ShardSet` 打开每个分片前检查文件字节数等于 index 的 token 数 × 2，复制不完整或 index 过期时报带分片名的错误，而不是 memmap 的乱码 OSError。
 - `data/raw` 的 24.4 GB 在分片写完后就不再需要，可以删除；保留 `data/tokens` 与 `data/tokenizer` 即可训练。

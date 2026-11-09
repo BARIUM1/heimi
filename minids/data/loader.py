@@ -3,8 +3,8 @@
 随机性完全由 (seed, step) 决定：同一 step 永远取到同一 batch，恢复训练不会错位。
 窗口不跨分片。每个窗口独立以概率 mix.code 选 code 来源；
 被选中做 FIM 的 code 窗口取 seq_len - 3 个 token，改写后恰好 seq_len + 1。
-组 batch 时检查所有 token < vocab_size，损坏的分片在这里被拦成 ValueError，
-不会流到 GPU 上变成 device-side assert。
+打开分片时核对文件大小等于 index 记录的 token 数 × 2，组 batch 时检查所有 token < vocab_size，
+损坏或过期的分片在这里被拦成带分片名的 ValueError，不会流到 GPU 上变成 device-side assert。
 """
 
 from __future__ import annotations
@@ -30,6 +30,9 @@ class ShardSet:
         self._maps: list[np.memmap] = []
         for f, n in zip(files, token_counts):
             f = Path(f)
+            size = f.stat().st_size
+            if size != 2 * n:
+                raise ValueError(f"分片 {f.name} 大小 {size} 字节 ≠ index 记录的 {n} 个 token × 2 字节，文件可能被截断或 index 已过期")
             if n < min_tokens:
                 warnings.warn(f"分片 {f.name} 只有 {n} 个 token，少于 {min_tokens}，已排除", UserWarning, stacklevel=2)
                 continue

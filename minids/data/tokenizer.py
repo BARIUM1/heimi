@@ -3,6 +3,10 @@
 前 16 个 id 固定留给特殊 token（顺序见 SPECIAL_TOKENS）。
 文本里字面出现的特殊 token 字符串一律按普通文本编码，特殊 id 只能由代码显式插入，
 这样数据里的一段 "<|endoftext|>" 不可能变成控制 token。
+
+这条规则不在保存的 json 文件里，只在 HeimiTokenizer 的构造函数里生效。所以 heimi-16k.json
+必须经 HeimiTokenizer.load 加载；直接用 tokenizers.Tokenizer.from_file 读到的对象会把字面的
+特殊串识别成 id 0..15。
 """
 
 from __future__ import annotations
@@ -100,8 +104,9 @@ def iter_training_corpus(
 ) -> Iterator[str]:
     """分词器训练语料：web 与 code 各按字节预算顺序抽取，跳过各自第一个文件里的验证集行。"""
     web, code = SOURCES["web"], SOURCES["code"]
-    yield from _iter_source_texts(web, local_files(root, web), val_rows.get("web", 0), web_bytes)
-    yield from _iter_source_texts(code, local_files(root, code), val_rows.get("code", 0), code_bytes)
+    # 缺键直接 KeyError：默认成 0 行会把验证集悄悄混进分词器语料
+    yield from _iter_source_texts(web, local_files(root, web), val_rows["web"], web_bytes)
+    yield from _iter_source_texts(code, local_files(root, code), val_rows["code"], code_bytes)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

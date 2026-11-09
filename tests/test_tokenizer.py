@@ -1,4 +1,6 @@
-from minids.data.tokenizer import SPECIAL_TOKENS
+import pytest
+
+from minids.data.tokenizer import SPECIAL_TOKENS, HeimiTokenizer, iter_training_corpus
 from tests.helpers_data import tiny_tokenizer
 
 
@@ -32,3 +34,20 @@ def test_vocab_size_is_requested(tmp_path):
 def test_encode_batch_matches_encode(tmp_path):
     tok = tiny_tokenizer(tmp_path)
     assert tok.encode_batch(["a b", "c"]) == [tok.encode("a b"), tok.encode("c")]
+
+
+def test_loaded_tokenizer_keeps_literal_special_strings_plain(tmp_path):
+    # 保存的 json 里不含这条规则，直接 Tokenizer.from_file 会把字面控制串识别成 id 0..15；
+    # 这里走 prepare 与训练实际使用的 HeimiTokenizer.load 路径，16 个特殊串都必须保持普通文本
+    tiny_tokenizer(tmp_path)
+    tok = HeimiTokenizer.load(tmp_path / "tok300.json")
+    for special in SPECIAL_TOKENS:
+        text = f"a {special} b"
+        ids = tok.encode(text)
+        assert min(ids) >= 16 and tok.decode(ids) == text
+
+
+def test_training_corpus_requires_val_rows_for_every_source(tmp_path):
+    # val_rows 缺键必须报错，而不是默认 0 行把验证集悄悄混进分词器语料
+    with pytest.raises(KeyError, match="web"):
+        next(iter_training_corpus(tmp_path, {"code": 0}))
