@@ -1,5 +1,7 @@
 import json
 
+import numpy as np
+
 import pytest
 import torch
 
@@ -102,3 +104,20 @@ def test_shard_size_must_match_index(tmp_path):
     for claimed in (30, 10):
         with pytest.raises(ValueError, match="web_0.bin"):
             ShardSet([p], [claimed], 5)
+
+
+def test_sequential_windows_follow_file_order_across_shards(tmp_path):
+    a = write_shard(tmp_path / "web_0.bin", list(range(20, 31)))  # 11 个 token：两个长 5 窗口，余 1 丢弃
+    b = write_shard(tmp_path / "web_1.bin", list(range(100, 110)))  # 10 个：两个窗口
+    s = ShardSet([a, b], [11, 10], 5)
+    w = s.sequential_windows(5, 4)
+    assert w.tolist() == [[20, 21, 22, 23, 24], [25, 26, 27, 28, 29], [100, 101, 102, 103, 104], [105, 106, 107, 108, 109]]
+    assert w.dtype == np.int64
+    with pytest.raises(ValueError, match="5"):
+        s.sequential_windows(5, 5)
+
+
+def test_read_prefix_concatenates_shards(tmp_path):
+    a = write_shard(tmp_path / "web_0.bin", list(range(20, 25)))
+    b = write_shard(tmp_path / "web_1.bin", list(range(100, 105)))
+    assert ShardSet([a, b], [5, 5], 5).read_prefix(7).tolist() == [20, 21, 22, 23, 24, 100, 101]

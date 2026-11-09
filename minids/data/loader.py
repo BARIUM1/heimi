@@ -5,6 +5,7 @@
 被选中做 FIM 的 code 窗口取 seq_len - 3 个 token，改写后恰好 seq_len + 1。
 打开分片时核对文件大小等于 index 记录的 token 数 × 2，组 batch 时检查所有 token < vocab_size，
 损坏或过期的分片在这里被拦成带分片名的 ValueError，不会流到 GPU 上变成 device-side assert。
+ShardSet 另提供两种顺序读取：sequential_windows 给验证集切固定窗口，read_prefix 给 FIM 评测取前若干 token。
 """
 
 from __future__ import annotations
@@ -73,6 +74,32 @@ class ShardSet:
         i = int(rng.choice(len(starts), p=starts / starts.sum()))
         start = int(rng.integers(0, starts[i]))
         return np.asarray(self._maps[i][start : start + length], dtype=np.int64), self._files[i].name
+
+    def sequential_windows(self, length: int, n: int) -> np.ndarray:
+        """从第一片开头起按顺序切不重叠窗口，一片剩余不足一个窗口就跳到下一片开头；凑不够 n 个抛 ValueError。"""
+        out = np.empty((n, length), dtype=np.int64)
+        got = 0
+        for m, count in zip(self._maps, self._counts):
+            start = 0
+            while got < n and start + length <= count:
+                out[got] = m[start : start + length]
+                got += 1
+                start += length
+            if got == n:
+                return out
+        raise ValueError(f"只能切出 {got} 个长 {length} 的窗口，少于要求的 {n} 个")
+
+    def read_prefix(self, max_tokens: int) -> np.ndarray:
+        """按片顺序拼接前 max_tokens 个 token，int64。"""
+        parts: list[np.ndarray] = []
+        remaining = int(max_tokens)
+        for m in self._maps:
+            if remaining <= 0:
+                break
+            take = min(remaining, len(m))
+            parts.append(np.asarray(m[:take], dtype=np.int64))
+            remaining -= take
+        return np.concatenate(parts) if parts else np.empty(0, dtype=np.int64)
 
 
 @dataclass(frozen=True)
