@@ -16,8 +16,8 @@ from pathlib import Path
 
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
 
-from minids.data.parquet_io import iter_documents
-from minids.data.sources import SOURCES, local_files
+from minids.data.parquet_io import iter_source_documents
+from minids.data.sources import SOURCES, Source, local_files
 
 log = logging.getLogger(__name__)
 
@@ -79,11 +79,11 @@ def train_tokenizer(texts: Iterable[str], out_path: Path, vocab_size: int = VOCA
     return HeimiTokenizer(tok)
 
 
-def _iter_source_texts(paths: Sequence[Path], skip_rows_first_file: int, byte_budget: int) -> Iterator[str]:
+def _iter_source_texts(source: Source, paths: Sequence[Path], skip_rows_first_file: int, byte_budget: int) -> Iterator[str]:
     used = 0
     for i, path in enumerate(paths):
         skip = skip_rows_first_file if i == 0 else 0
-        for row, text in iter_documents(path):
+        for row, text in iter_source_documents(path, source):
             if row < skip or not text:
                 continue
             yield text
@@ -99,8 +99,9 @@ def iter_training_corpus(
     code_bytes: int = 600_000_000,
 ) -> Iterator[str]:
     """分词器训练语料：web 与 code 各按字节预算顺序抽取，跳过各自第一个文件里的验证集行。"""
-    yield from _iter_source_texts(local_files(root, SOURCES["web"]), val_rows.get("web", 0), web_bytes)
-    yield from _iter_source_texts(local_files(root, SOURCES["code"]), val_rows.get("code", 0), code_bytes)
+    web, code = SOURCES["web"], SOURCES["code"]
+    yield from _iter_source_texts(web, local_files(root, web), val_rows.get("web", 0), web_bytes)
+    yield from _iter_source_texts(code, local_files(root, code), val_rows.get("code", 0), code_bytes)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

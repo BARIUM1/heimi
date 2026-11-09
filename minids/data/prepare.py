@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from minids.data.parquet_io import iter_documents
-from minids.data.sources import SOURCES, local_files
+from minids.data.sources import SOURCES, TEXT_COLUMNS, Source, local_files
 from minids.data.tokenizer import EOT, HeimiTokenizer
 
 log = logging.getLogger(__name__)
@@ -30,11 +30,17 @@ class PrepareConfig:
     val_target_bytes: int = 80_000_000  # 约 2000 万 token × 4 字节
 
 
-def estimate_val_rows(parquet_path: Path, target_bytes: int) -> int:
+def estimate_val_rows(
+    parquet_path: Path,
+    target_bytes: int,
+    text_columns: Sequence[str] = TEXT_COLUMNS,
+    filter_column: str | None = None,
+    filter_values: Sequence[str] = (),
+) -> int:
     """顺序读文件，累计非空文本的 UTF-8 字节数首次 ≥ target_bytes 时的行数（含该行）。"""
     used = 0
     rows = 0
-    for row, text in iter_documents(parquet_path):
+    for row, text in iter_documents(parquet_path, text_columns, filter_column=filter_column, filter_values=filter_values):
         rows = row + 1
         if text:
             used += len(text.encode("utf-8"))
@@ -88,6 +94,9 @@ def prepare_source(
     out_root: Path,
     val_rows: int,
     cfg: PrepareConfig = PrepareConfig(),
+    text_columns: Sequence[str] = TEXT_COLUMNS,
+    filter_column: str | None = None,
+    filter_values: Sequence[str] = (),
 ) -> dict:
     out_dir = Path(out_root) / source_name
     writers = {True: ShardWriter(out_dir, "val", cfg.tokens_per_shard), False: ShardWriter(out_dir, "train", cfg.tokens_per_shard)}
@@ -104,7 +113,9 @@ def prepare_source(
     for file_i, path in enumerate(parquet_paths):
         texts: list[str] = []
         flags: list[bool] = []
-        for row, text in iter_documents(path, batch_rows=cfg.batch_rows):
+        for row, text in iter_documents(
+            path, text_columns, batch_rows=cfg.batch_rows, filter_column=filter_column, filter_values=filter_values
+        ):
             if not text:
                 counts["skipped"] += 1
                 continue
@@ -169,7 +180,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         rows = {}
         for name, source in SOURCES.items():
             first = local_files(root, source)[0]
-            rows[name] = estimate_val_rows(first, args.target_bytes)
+            rows[name] = estimate_val_rows(
+                first, args.target_bytes, source.text_columns, source.filter_column, source.filter_values
+            )
             log.info("%s：%s 的前 %d 行进验证集（≈ %.0f MB 文本）", name, first.name, rows[name], args.target_bytes / 1e6)
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(rows, indent=2), encoding="utf-8")
@@ -183,7 +196,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     cfg = PrepareConfig(tokens_per_shard=args.tokens_per_shard)
     for name in (["web", "code"] if args.source == "all" else [args.source]):
         t0 = time.perf_counter()
-        stats = prepare_source(name, local_files(root, SOURCES[name]), tok, out_root, val_rows[name], cfg)
+        src: Source = SOURCES[name]
+        stats = prepare_source(
+            name, local_files(root, src), tok, out_root, val_rows[name], cfg,
+            text_columns=src.text_columns, filter_column=src.filter_column, filter_values=src.filter_values,
+        )
         stats["seconds"] = round(time.perf_counter() - t0)
         per_source[name] = stats
         log.info(

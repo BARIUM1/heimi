@@ -19,9 +19,12 @@ _CORPUS = [
 ] * 20
 
 
-def write_parquet(path: Path, texts: list, column: str = "text") -> Path:
+def write_parquet(path: Path, texts: list, column: str = "text", extra: dict | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pa.table({column: pa.array(texts, type=pa.string())}), path)
+    cols = {column: pa.array(texts, type=pa.string())}
+    for name, values in (extra or {}).items():
+        cols[name] = pa.array(values)
+    pq.write_table(pa.table(cols), path)
     return path
 
 
