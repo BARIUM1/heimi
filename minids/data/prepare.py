@@ -19,6 +19,7 @@ import numpy as np
 from minids.data.parquet_io import iter_documents
 from minids.data.sources import SOURCES, TEXT_COLUMNS, Source, local_files
 from minids.data.tokenizer import EOT, HeimiTokenizer
+from minids.keepawake import keep_awake
 
 log = logging.getLogger(__name__)
 
@@ -194,21 +195,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     index_path = out_root / "index.json"
     per_source = json.loads(index_path.read_text(encoding="utf-8"))["sources"] if index_path.exists() else {}
     cfg = PrepareConfig(tokens_per_shard=args.tokens_per_shard)
-    for name in (["web", "code"] if args.source == "all" else [args.source]):
-        t0 = time.perf_counter()
-        src: Source = SOURCES[name]
-        stats = prepare_source(
-            name, local_files(root, src), tok, out_root, val_rows[name], cfg,
-            text_columns=src.text_columns, filter_column=src.filter_column, filter_values=src.filter_values,
-        )
-        stats["seconds"] = round(time.perf_counter() - t0)
-        per_source[name] = stats
-        log.info(
-            "%s 完成：%d 篇（跳过 %d），训练 %.3fB token / %d 片，验证 %.3fB token / %d 片，%d 秒",
-            name, stats["docs"], stats["skipped"], stats["tokens_train"] / 1e9, len(stats["train"]),
-            stats["tokens_val"] / 1e9, len(stats["val"]), stats["seconds"],
-        )
-        write_index(out_root, per_source, tok.vocab_size)  # 每个来源完成就落盘一次
+    with keep_awake():
+        for name in (["web", "code"] if args.source == "all" else [args.source]):
+            t0 = time.perf_counter()
+            src: Source = SOURCES[name]
+            stats = prepare_source(
+                name, local_files(root, src), tok, out_root, val_rows[name], cfg,
+                text_columns=src.text_columns, filter_column=src.filter_column, filter_values=src.filter_values,
+            )
+            stats["seconds"] = round(time.perf_counter() - t0)
+            per_source[name] = stats
+            log.info(
+                "%s 完成：%d 篇（跳过 %d），训练 %.3fB token / %d 片，验证 %.3fB token / %d 片，%d 秒",
+                name, stats["docs"], stats["skipped"], stats["tokens_train"] / 1e9, len(stats["train"]),
+                stats["tokens_val"] / 1e9, len(stats["val"]), stats["seconds"],
+            )
+            write_index(out_root, per_source, tok.vocab_size)  # 每个来源完成就落盘一次
     log.info("index 写入 %s", index_path)
     return 0
 
