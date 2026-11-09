@@ -1,8 +1,11 @@
 """只读地把 runs/<run>/ 下的日志与检查点整理成窗口要的数据。
 
-窗口从不写 runs/。这里的函数不经 HTTP 就能测：列 run、列检查点、成长总览序列。
+窗口从不写 runs/。这里的函数不经 HTTP 就能测：列 run、列检查点、成长总览序列、训练状态与预计剩余。
 run 名与检查点名来自 URL 和请求体，一律先过 safe_run_dir / safe_checkpoint：
 名字不合规、带 ..、解析后跑出目录的，都当作不存在。
+
+训练状态分三档：最后一条记录在 RUNNING_WITHIN_S 秒内是"训练中"；超过但在 QUIET_WITHIN_S 内是
+"评测中或暂停"（级末评测最长约 20 分钟，期间不写指标）；再久就是"已停止"。
 """
 
 from __future__ import annotations
@@ -10,9 +13,13 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
+from statistics import median
 
+from minids.gpu import gpu_status
 from minids.logging_io import EVAL_FILE, EVENTS_FILE, METRICS_FILE, SAMPLES_FILE, read_jsonl
 
+RUNNING_WITHIN_S = 180.0
+QUIET_WITHIN_S = 1800.0
 RUN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _CKPT_RE = re.compile(r"^(?P<stage>[A-Za-z0-9][A-Za-z0-9_.-]*?)_(?:step(?P<step>\d+)|final)\.pt$")
 LOG_FILES = (METRICS_FILE, EVAL_FILE, EVENTS_FILE, SAMPLES_FILE)
@@ -74,9 +81,10 @@ def format_params(n: int) -> str:
 
 def _parse_time(value: object) -> datetime | None:
     try:
-        return datetime.fromisoformat(str(value))
+        t = datetime.fromisoformat(str(value))
     except (TypeError, ValueError):
         return None
+    return t if t.tzinfo is not None else t.astimezone()  # 没带时区的按本地时间算
 
 
 def last_update(run_dir: Path) -> datetime | None:
@@ -186,3 +194,86 @@ def overview(run_dir: Path) -> dict:
         if current > params[-1]["tokens_total"]:
             params.append({"tokens_total": current, "params": params[-1]["params"]})
     return {"eval": eval_out, "growth": growth, "params": params}
+
+
+def training_state(last: datetime | None, now: datetime) -> str:
+    if last is None:
+        return "stopped"
+    age = (now - last).total_seconds()
+    if age <= RUNNING_WITHIN_S:
+        return "running"
+    return "quiet" if age <= QUIET_WITHIN_S else "stopped"
+
+
+def _stage_steps(events: list[dict], stage: str) -> int | None:
+    steps = None
+    for e in events:
+        if e.get("type") == "stage_start" and e.get("stage") == stage:
+            steps = e.get("data", {}).get("steps")
+    return steps
+
+
+def eta_seconds(metrics: list[dict], events: list[dict]) -> float | None:
+    """本级剩余 token ÷ 该级最近 10 条指标（即最近 100 步）吞吐的中位数。评测后那一条偏低，中位数不受影响。"""
+    if not metrics:
+        return None
+    last = metrics[-1]
+    stage, step = last["stage"], last["step"]
+    steps = _stage_steps(events, stage)
+    if not steps or not step:
+        return None
+    if step >= steps:
+        return 0.0
+    recent = [m["tok_per_s"] for m in metrics if m["stage"] == stage and m["tok_per_s"] > 0][-10:]
+    if not recent:
+        return None
+    tokens_per_step = last["tokens_stage"] / step
+    return (steps - step) * tokens_per_step / median(recent)
+
+
+def status(runs_dir: Path, now: datetime | None = None) -> dict:
+    """最近更新的那个 run 的当前状态；没有任何 run 时各数值为 None。"""
+    now = now or datetime.now().astimezone()
+    out: dict = {
+        "run": None, "state": "stopped", "running": False,
+        "stage": None, "step": None, "steps": None, "global_step": None, "tokens_total": None,
+        "loss": None, "lr": None, "tok_per_s": None, "mem_gb": None, "gpu_temp_c": None,
+        "eta_seconds": None, "last_update": None, "seconds_since_update": None, "last_eval": None,
+        "gpu": gpu_status(),
+    }
+    runs_dir = Path(runs_dir)
+    if not runs_dir.is_dir():
+        return out
+    candidates = []
+    for d in runs_dir.iterdir():
+        if d.is_dir() and RUN_NAME_RE.match(d.name):
+            t = last_update(d)
+            if t is not None:
+                candidates.append((t.timestamp(), t, d))
+    if not candidates:
+        return out
+    _, updated, run_dir = max(candidates, key=lambda c: c[0])
+
+    metrics = read_jsonl(run_dir / METRICS_FILE)
+    events = read_jsonl(run_dir / EVENTS_FILE)
+    evals = read_jsonl(run_dir / EVAL_FILE)
+    latest = _latest_progress(metrics, events)
+    state = training_state(updated, now)
+    out.update({
+        "run": run_dir.name, "state": state, "running": state == "running",
+        "last_update": updated.isoformat(timespec="seconds"),
+        "seconds_since_update": (now - updated).total_seconds(),
+        "last_eval": evals[-1] if evals else None,
+        "eta_seconds": eta_seconds(metrics, events),
+    })
+    if latest is not None:
+        stage = latest["stage"]
+        out.update({"stage": stage, "steps": _stage_steps(events, stage),
+                    "global_step": latest["global_step"], "tokens_total": latest["tokens_total"], "step": 0})
+    if metrics:
+        m = metrics[-1]
+        if latest is None or m["stage"] == latest["stage"]:
+            out["step"] = m["step"]
+        for k in ("loss", "lr", "tok_per_s", "mem_gb", "gpu_temp_c"):
+            out[k] = m.get(k)
+    return out
