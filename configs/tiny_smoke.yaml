@@ -1,0 +1,82 @@
+# 烟雾测试（spec 13.2）：合成数据上 30 步 → 加深 → 20 步 → 加宽 → 20 步 → 任务阶段 10 步。
+# 先 python scripts/make_smoke_data.py，再 python train.py --config configs/tiny_smoke.yaml --run smoke
+# 目标 GPU 上 1 分钟内跑完。随机 token 训不出语言，只看流水线、损失下降、增长验证、恢复。
+seed: 0
+seq_len: 128
+tokens_per_step: 2048        # 8 条 × 128 × 2 个微步
+log_interval: 5
+ckpt_interval: 25
+keep_checkpoints: 2
+compile: false
+max_mem_frac: 0.8
+
+data:
+  index: data/smoke/index.json
+  tokenizer: data/tokenizer/heimi-16k.json
+  hellaswag: data/eval/hellaswag_val.parquet
+
+eval:
+  interval: 25
+  val_windows: 8
+  hellaswag: false
+  fim_em_samples: 20
+  sample_interval: 25
+  sample_tokens: 16
+
+model:
+  vocab_size: 16384
+  seq_len: 128
+  qk_nope_head_dim: 16
+  qk_rope_head_dim: 8
+  v_head_dim: 32
+
+prompts:
+  - id: en_history
+    prefix: "The history of the Roman Empire began when"
+  - id: en_science
+    prefix: "Water boils at a lower temperature on a mountain because"
+  - id: en_story
+    prefix: "Once upon a time, a small black cat named Heimi"
+  - id: py_func
+    prefix: "def fibonacci(n):\n    \"\"\"Return the n-th Fibonacci number.\"\"\"\n"
+  - id: sh_find
+    prefix: "# list all python files modified in the last day\nfind . -name"
+  - id: fim_py
+    prefix: "def is_even(n):\n    "
+    suffix: "\n\nprint(is_even(4))\n"
+
+stages:
+  - name: smoke0
+    growth: none
+    model: {n_layer: 2, d_model: 64, n_head: 2, kv_lora_rank: 32, ffn_hidden: 128}
+    tokens: 61440              # 30 步
+    lr: 1.0e-3
+    warmup_frac: 0.1
+    micro_batch: 8
+    mix: {web: 0.85, code: 0.15, fim_rate: 0.0}
+  - name: smoke1
+    growth: depth
+    model: {n_layer: 4, d_model: 64, n_head: 2, kv_lora_rank: 32, ffn_hidden: 128}
+    tokens: 40960              # 20 步
+    lr: 1.0e-3
+    warmup_frac: 0.1
+    micro_batch: 8
+    mix: {web: 0.85, code: 0.15, fim_rate: 0.0}
+  - name: smoke2
+    growth: width
+    model: {n_layer: 4, d_model: 128, n_head: 4, kv_lora_rank: 64, ffn_hidden: 256}
+    tokens: 40960              # 20 步
+    lr: 1.0e-3
+    warmup_frac: 0.1
+    micro_batch: 8
+    mix: {web: 0.85, code: 0.15, fim_rate: 0.0}
+    noise_std_rel: 1.0e-3
+    rel_tol: 1.0e-2
+  - name: smoke_task
+    growth: none
+    model: {n_layer: 4, d_model: 128, n_head: 4, kv_lora_rank: 64, ffn_hidden: 256}
+    tokens: 20480              # 10 步
+    lr: 5.0e-4
+    warmup_frac: 0.1
+    micro_batch: 8
+    mix: {web: 0.20, code: 0.80, fim_rate: 0.5}
