@@ -32,14 +32,17 @@ def fim_prompt_ids(
 
 
 @torch.no_grad()
-def greedy_line(model, tok: HeimiTokenizer, prompt_ids: list[int], max_new_tokens: int, device: str, eot: int = 0) -> str:
-    """每步贪心一个 token；生成 eot 即停；解码文本出现换行即截到第一个换行并停。调用方保证提示 + 预算 ≤ seq_len。"""
+def greedy_line(
+    model, tok: HeimiTokenizer, prompt_ids: list[int], max_new_tokens: int, device: str, eot: int = 0, n_special: int = 16
+) -> str:
+    """每步贪心一个 token；生成 eot 或任何特殊 id（< n_special）即停，特殊 token 的字面串从不属于补全内容；
+    解码文本出现换行即截到第一个换行并停。调用方保证提示 + 预算 ≤ seq_len。"""
     idx = torch.tensor([list(prompt_ids)], dtype=torch.long, device=device)
     generated: list[int] = []
     for _ in range(max_new_tokens):
         idx = model.generate(idx, 1, temperature=0.0)
         t = int(idx[0, -1].item())
-        if t == eot:
+        if t == eot or t < n_special:
             break
         generated.append(t)
         text = tok.decode(generated)

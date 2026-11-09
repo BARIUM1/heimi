@@ -24,6 +24,13 @@ def test_greedy_line_stops_at_eot_and_at_budget(tmp_path):
     assert greedy_line(ScriptedModel(body * 10), tok, [1], len(body), "cpu") == "x = 1"
 
 
+def test_greedy_line_stops_at_any_special_token(tmp_path):
+    # 模型吐出 fim_suffix 之类的控制 id 时不能把 "<|fim_suffix|>" 字面串当成补全内容
+    tok = tiny_tokenizer(tmp_path)
+    body = tok.encode("x = 1")
+    assert greedy_line(ScriptedModel(body + [3] + body), tok, [1], 32, "cpu") == "x = 1"
+
+
 def test_complete_middle_wires_prompt_and_generation(tmp_path):
     tok = tiny_tokenizer(tmp_path)
     out = complete_middle(ScriptedModel(tok.encode("pass") + tok.encode("\n")), tok, "def f():\n    ", "\n", 8, "cpu", 4, 4)
