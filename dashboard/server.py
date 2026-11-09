@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -20,6 +21,9 @@ from dashboard.worker import WorkerClient, WorkerError, WorkerTimeout
 from minids.logging_io import EVAL_FILE, EVENTS_FILE, SAMPLES_FILE
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+# 只认以本机名字访问的请求。服务本来就只绑 127.0.0.1，但用户开着窗口时访问到的恶意网页
+# 可以靠 DNS 重绑定把自己的域名指到 127.0.0.1；那样的请求 Host 头是它的域名，在这里被拒。
+ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
 
 class GenerateRequest(BaseModel):
@@ -42,6 +46,7 @@ def create_app(runs_dir: Path, worker=None, repo_root: Path | None = None) -> Fa
         gen_worker.close()
 
     app = FastAPI(title="黑米 Heimi 训练窗口", lifespan=lifespan, docs_url=None, redoc_url=None)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)  # 端口不参与比较
 
     @app.exception_handler(data.RunNotFound)
     async def _not_found(request: Request, exc: data.RunNotFound) -> JSONResponse:

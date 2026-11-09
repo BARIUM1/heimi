@@ -2,10 +2,9 @@ import hashlib
 import re
 from pathlib import Path
 
-from fastapi.testclient import TestClient
 
 from dashboard.server import create_app
-from tests.helpers_dashboard import FakeWorker
+from tests.helpers_dashboard import FakeWorker, local_client
 
 STATIC = Path("dashboard/static")
 
@@ -15,7 +14,7 @@ def _html() -> str:
 
 
 def test_index_is_served_with_four_regions_in_chinese(dash_runs):
-    with TestClient(create_app(dash_runs[0], worker=FakeWorker())) as c:
+    with local_client(create_app(dash_runs[0], worker=FakeWorker())) as c:
         r = c.get("/")
         assert r.status_code == 200 and "text/html" in r.headers["content-type"]
         assert c.get("/static/chart.umd.min.js").status_code == 200

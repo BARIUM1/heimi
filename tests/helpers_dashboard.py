@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import time
 
+from fastapi.testclient import TestClient
+
+
+def local_client(app) -> TestClient:
+    """像浏览器那样用本机地址访问窗口：后台只认 127.0.0.1 / localhost 这两个 Host。"""
+    return TestClient(app, base_url="http://127.0.0.1:8787")
+
 
 def sleepy_worker(conn, repo_root) -> None:
     """用来测超时：收到请求也不回话。必须是模块级函数，spawn 出来的子进程要能按名字导入它。"""

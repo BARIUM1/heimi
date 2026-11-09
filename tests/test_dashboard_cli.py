@@ -1,14 +1,14 @@
 from pathlib import Path
 
-from fastapi.testclient import TestClient
 
 from dashboard.cli import build
+from tests.helpers_dashboard import local_client
 
 
 def test_defaults_bind_localhost_8787_and_open_browser(tmp_path):
     app, opts = build(["--runs", str(tmp_path)])
     assert (opts.host, opts.port, opts.open_browser, opts.runs) == ("127.0.0.1", 8787, True, tmp_path)
-    with TestClient(app) as c:
+    with local_client(app) as c:
         assert c.get("/api/runs").json() == []  # 还没有任何 run 时窗口也能开
         assert c.get("/api/status").json()["run"] is None
 

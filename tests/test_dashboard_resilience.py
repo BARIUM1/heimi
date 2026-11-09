@@ -3,14 +3,13 @@
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
 from dashboard import data, worker
 from dashboard.data import list_runs, metrics_since, overview, status
 from dashboard.server import create_app
 from dashboard.worker import ModelCache, WorkerClient, WorkerTimeout, worker_main
 from minids.logging_io import METRICS_FILE, EvalRecord, MetricsRecord, RunLogger, now_iso
-from tests.helpers_dashboard import FakeWorker, dying_worker, flaky_worker
+from tests.helpers_dashboard import FakeWorker, dying_worker, flaky_worker, local_client
 
 
 def _metric(gs, loss, stage="s0"):
@@ -43,7 +42,7 @@ def test_metrics_drop_lines_superseded_by_a_rewind(tmp_path):
     rows = metrics_since(tmp_path)
     assert [(r["global_step"], r["loss"]) for r in rows] == [(50, 5.0), (60, 4.95), (70, 4.85), (80, 4.7)]
     assert [r["global_step"] for r in metrics_since(tmp_path, 60)] == [70, 80]
-    with TestClient(create_app(tmp_path.parent, worker=FakeWorker())) as c:
+    with local_client(create_app(tmp_path.parent, worker=FakeWorker())) as c:
         got = c.get(f"/api/runs/{tmp_path.name}/metrics").json()
     assert [r["global_step"] for r in got] == [50, 60, 70, 80]
 
@@ -75,7 +74,7 @@ def test_one_unreadable_log_does_not_take_down_the_other_runs(tmp_path, monkeypa
 def test_unreadable_log_is_a_clear_error_for_that_run_only(tmp_path):
     RunLogger(tmp_path / "heimi").metrics(_metric(10, 5.0))
     _torn_run(tmp_path / "broken")
-    with TestClient(create_app(tmp_path, worker=FakeWorker())) as c:
+    with local_client(create_app(tmp_path, worker=FakeWorker())) as c:
         assert c.get("/api/runs").status_code == 200
         assert c.get("/api/status").status_code == 200
         assert c.get("/api/runs/heimi/metrics").status_code == 200

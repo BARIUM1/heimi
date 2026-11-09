@@ -1,15 +1,14 @@
 import pytest
-from fastapi.testclient import TestClient
 
 from dashboard.server import create_app
 from dashboard.worker import WorkerClient, WorkerError, WorkerTimeout
-from tests.helpers_dashboard import FakeWorker
+from tests.helpers_dashboard import FakeWorker, local_client
 
 
 @pytest.fixture
 def client(dash_runs):
     worker = FakeWorker()
-    with TestClient(create_app(dash_runs[0], worker=worker)) as c:
+    with local_client(create_app(dash_runs[0], worker=worker)) as c:
         c.worker = worker
         c.runs_dir = dash_runs[0]
         yield c
@@ -61,23 +60,23 @@ def test_generate_rejects_bad_names_and_out_of_range_values(client):
 
 def test_generate_timeout_is_504_and_worker_error_is_500(dash_runs):
     body = {"run": "heimi", "checkpoint": "smoke1_final.pt", "prefix": "x"}
-    with TestClient(create_app(dash_runs[0], worker=FakeWorker(exc=WorkerTimeout("生成超过 60 秒")))) as c:
+    with local_client(create_app(dash_runs[0], worker=FakeWorker(exc=WorkerTimeout("生成超过 60 秒")))) as c:
         r = c.post("/api/generate", json=body)
         assert r.status_code == 504 and "60" in r.json()["detail"]
-    with TestClient(create_app(dash_runs[0], worker=FakeWorker(exc=WorkerError("RuntimeError: CUDA 不可用")))) as c:
+    with local_client(create_app(dash_runs[0], worker=FakeWorker(exc=WorkerError("RuntimeError: CUDA 不可用")))) as c:
         r = c.post("/api/generate", json=body)
         assert r.status_code == 500 and "CUDA" in r.json()["detail"]
 
 
 def test_generate_end_to_end_with_real_worker(dash_runs):
-    with TestClient(create_app(dash_runs[0], worker=WorkerClient())) as c:
+    with local_client(create_app(dash_runs[0], worker=WorkerClient())) as c:
         r = c.post("/api/generate", json={"run": "heimi", "checkpoint": "smoke0_final.pt", "prefix": "The cat", "max_new_tokens": 4, "temperature": 0.0})
         assert r.status_code == 200 and isinstance(r.json()["text"], str) and r.json()["seconds"] >= 0
 
 
 def test_worker_is_closed_on_shutdown(dash_runs):
     worker = FakeWorker()
-    with TestClient(create_app(dash_runs[0], worker=worker)):
+    with local_client(create_app(dash_runs[0], worker=worker)):
         pass
     assert worker.closed
 
