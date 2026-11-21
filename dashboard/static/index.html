@@ -302,6 +302,20 @@ button.ghost { background: transparent; color: var(--accent); padding: 5px 12px;
       </section>
     </div>
 
+    <section id="official">
+      <h2>官方评测</h2>
+      <p class="hint">标准评测框架下的公开评测；第一行是在同一台机器上、用同样的方法测的 GPT-2 small。</p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>模型</th><th>参数量</th><th>BLiMP</th><th>HellaSwag</th><th>WikiText bits/byte</th><th>RepoBench EM</th><th>RepoBench ES</th><th>单行填空（FIM）</th><th>单行填空（仅前缀）</th></tr>
+          </thead>
+          <tbody id="official-rows"></tbody>
+        </table>
+      </div>
+      <p class="hint">读法：BLiMP 的随机水平是 50%，HellaSwag 是 25%；bits/byte 越低越好，其余越高越好；单行填空是精确匹配，不是官方的 pass@1；带"抽样"标记的行样本数与参照不同，不能直接比。</p>
+    </section>
+
     <section id="samples">
       <div class="section-head">
         <h2>成长样本墙</h2>
@@ -407,6 +421,7 @@ const state = {
   runs: [], runsLoaded: false, run: null, baseline: null,
   metrics: new Map(),   // run → 指标数组（增量追加）
   overview: new Map(),  // run → {eval, growth, params}
+  official: new Map(),  // run → {rows, reference}，取不到时是 {error}（只影响官方评测这一格）
   samples: [], samplesRun: null, showAll: false,
   status: null, connected: true,
 };
@@ -452,6 +467,8 @@ async function refresh() {
       state.metrics.set(run, cur.concat(rows.filter((r) => r.global_step > last)));
     }));
     jobs.push(getJSON(`${base}/overview`).then((o) => state.overview.set(run, o)));
+    // 官方评测自己接住错误：读不出来只在它那一格说明，不触发全局的"连接中断"
+    jobs.push(getJSON(`${base}/official`).then((o) => state.official.set(run, o)).catch(() => state.official.set(run, { error: true })));
     jobs.push(getJSON(`${base}/samples`).then((rows) => { state.samples = rows; state.samplesRun = run; }));
     const baseRun = state.runs.find((r) => isBaseline(r.name) && r.name !== run);
     state.baseline = baseRun ? baseRun.name : null;
@@ -481,6 +498,7 @@ function render() {
   renderLegend();
   renderCharts();
   renderEvalTable();
+  renderOfficial();
   renderStatus();
   renderSamples();
   renderCheckpointOptions();
@@ -760,6 +778,41 @@ function renderEvalTable() {
     el("td", { text: fmtPct(e.hellaswag_acc) }), el("td", { text: fmtPct(e.fim_em) })));
   if (!rows.length) rows.push(el("tr", null, el("td", { colspan: "7", text: "还没有评测：训练每 500 步评一次。" })));
   $("eval-rows").replaceChildren(...rows);
+}
+
+// 官方评测表：先是参照行，再是各检查点；文字一律走 el(...) 的文本节点
+function renderOfficial() {
+  const o = state.official.get(state.run) || { rows: [], reference: [] };
+  const key = state.run + ":" + JSON.stringify(o);
+  if (sig.official === key) return;
+  sig.official = key;
+  const cells = (m, codeRan) => {
+    m = m || {};
+    const code = (x, f) => (codeRan ? f(x) : "—");  // 没跑代码评测的行，代码列留空而不是 0
+    return [
+      fmtPct(m.blimp_acc), fmtPct(m.hellaswag_acc_norm), fmtFixed(m.wikitext_bits_per_byte, 3),
+      code(m.repobench_em, fmtPct), code(m.repobench_es, (x) => fmtFixed(x, 1)),
+      code(m.infill_em_fim, fmtPct), code(m.infill_em_prefix, fmtPct),
+    ];
+  };
+  const line = (name, params, m, codeRan) => el("tr", null,
+    el("td", { text: name }), el("td", { text: fmtParams(params) }), ...cells(m, codeRan).map((t) => el("td", { text: t })));
+  if (o.error) {
+    $("official-rows").replaceChildren(el("tr", null, el("td", { colspan: "9", text: "官方评测记录读不出来，其他区域不受影响。" })));
+    return;
+  }
+  const hasRef = o.reference.length > 0;
+  const rows = o.reference.map((r) => line(`${r.label}（参照）`, r.params_non_embedding, r.metrics, r.code_limit !== 0));
+  for (const r of o.rows) {
+    const tags = [];
+    const sampled = !r.comparable || (!hasRef && (r.limit != null || r.code_limit > 0));
+    if (sampled) tags.push("抽样");
+    if (r.code_limit === 0) tags.push("无代码评测");
+    const name = (r.checkpoint === `${r.stage}_final.pt` ? r.stage : r.checkpoint) + (tags.length ? `（${tags.join("，")}）` : "");
+    rows.push(line(name, r.params_non_embedding, r.metrics, r.code_limit !== 0));
+  }
+  if (!rows.length) rows.push(el("tr", null, el("td", { colspan: "9", text: "还没有官方评测结果。训练停着的时候运行 python official_eval.py --run <run 名>。" })));
+  $("official-rows").replaceChildren(...rows);
 }
 
 // ---- 悬停与键盘 ----

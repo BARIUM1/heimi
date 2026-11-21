@@ -20,6 +20,7 @@ from dashboard.server import create_app
 HOST = "127.0.0.1"  # 只给本机看，不提供改绑其他地址的选项
 # 检查点里记的分词器路径是相对仓库根目录的；按本文件的位置定根目录，从哪个目录启动都一样
 REPO_ROOT = Path(__file__).resolve().parents[1]
+REFERENCE_FILE = REPO_ROOT / "docs" / "official" / "reference.json"  # 官方评测的 GPT-2 参照，随仓库提交
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ def build(argv: Sequence[str] | None = None) -> tuple[FastAPI, Options]:
     p.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
     args = p.parse_args(argv)
     opts = Options(runs=Path(args.runs), host=HOST, port=args.port, open_browser=not args.no_browser)
-    return create_app(opts.runs, repo_root=REPO_ROOT), opts
+    return create_app(opts.runs, repo_root=REPO_ROOT, reference_path=REFERENCE_FILE), opts
 
 
 def main(argv: Sequence[str] | None = None) -> int:

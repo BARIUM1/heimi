@@ -23,6 +23,7 @@ from statistics import median
 
 from minids.gpu import gpu_status
 from minids.logging_io import EVAL_FILE, EVENTS_FILE, METRICS_FILE, SAMPLES_FILE, read_jsonl
+from minids.official.results import OFFICIAL_FILE, latest_per_checkpoint, load_reference
 
 RUNNING_WITHIN_S = 180.0
 QUIET_WITHIN_S = 1800.0
@@ -246,6 +247,29 @@ def overview(run_dir: Path) -> dict:
         if current > params[-1]["tokens_total"]:
             params.append({"tokens_total": current, "params": params[-1]["params"]})
     return {"eval": eval_out, "growth": growth, "params": params}
+
+
+_REFERENCE_KEYS = ("label", "params_non_embedding", "limit", "code_limit", "metrics")
+
+
+def official(run_dir: Path, reference_path: Path | None) -> dict:
+    """官方评测表：每个检查点一行（latest_per_checkpoint 挑出的那条）加参照行。
+
+    comparable：没有参照时为真；否则当且仅当这一行的 limit 与 code_limit 都等于第一条参照的，
+    即样本设置相同，才能和参照并排比。official.jsonl 不在 LOG_FILES 里：官方评测不是训练活动，
+    不能让它推迟"训练最后一次更新"的时间。窗口只读，这里不创建任何文件。
+    """
+    reference = []
+    if reference_path is not None:
+        for name, entry in load_reference(reference_path).items():
+            if isinstance(entry, dict) and isinstance(entry.get("metrics"), dict):
+                reference.append({"name": name, **{k: entry.get(k) for k in _REFERENCE_KEYS}})
+    first = reference[0] if reference else None
+    rows = []
+    for r in latest_per_checkpoint(read_log(run_dir, OFFICIAL_FILE)):
+        same = first is None or (r.get("limit") == first["limit"] and r.get("code_limit") == first["code_limit"])
+        rows.append({**r, "comparable": same})
+    return {"rows": rows, "reference": reference}
 
 
 def training_state(last: datetime | None, now: datetime) -> str:

@@ -36,7 +36,7 @@ class GenerateRequest(BaseModel):
     device: Literal["cpu", "cuda"] = "cpu"
 
 
-def create_app(runs_dir: Path, worker=None, repo_root: Path | None = None) -> FastAPI:
+def create_app(runs_dir: Path, worker=None, repo_root: Path | None = None, reference_path: Path | None = None) -> FastAPI:
     runs_dir = Path(runs_dir)
     gen_worker = worker if worker is not None else WorkerClient(repo_root=repo_root)  # 进程在第一次生成时才启动
 
@@ -87,6 +87,10 @@ def create_app(runs_dir: Path, worker=None, repo_root: Path | None = None) -> Fa
     @app.get("/api/runs/{run}/overview")
     def api_overview(run: str) -> dict:
         return data.overview(data.safe_run_dir(runs_dir, run))
+
+    @app.get("/api/runs/{run}/official")
+    def api_official(run: str) -> dict:
+        return data.official(data.safe_run_dir(runs_dir, run), reference_path)
 
     @app.get("/api/status")
     def api_status(run: str | None = None) -> dict:

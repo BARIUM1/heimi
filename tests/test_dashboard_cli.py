@@ -30,9 +30,9 @@ def test_repo_root_does_not_depend_on_where_the_dashboard_is_launched_from(tmp_p
     seen = {}
     real = cli.create_app
 
-    def recording(runs_dir, worker=None, repo_root=None):
+    def recording(runs_dir, worker=None, repo_root=None, reference_path=None):
         seen["repo_root"] = repo_root
-        return real(runs_dir, worker=worker, repo_root=repo_root)
+        return real(runs_dir, worker=worker, repo_root=repo_root, reference_path=reference_path)
 
     monkeypatch.setattr(cli, "create_app", recording)
     monkeypatch.chdir(tmp_path)
