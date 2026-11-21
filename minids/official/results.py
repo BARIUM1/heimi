@@ -10,6 +10,11 @@ from pathlib import Path
 from minids.logging_io import append_jsonl, read_jsonl
 
 OFFICIAL_FILE = "official.jsonl"
+# 代码评测的出题方式。"healed"：提示结尾的空白交给模型自己写（minids/official/healing.py），
+# 填空题待填那一行行末的换行算在后缀开头。"plain"：2026-11-21 第一次评测用的旧方式（提示原样喂进去），
+# 那时的记录和参照条目里没有 code_method 这一项。两种方式的代码成绩不能放在一起比。
+CODE_METHOD = "healed"
+LEGACY_CODE_METHOD = "plain"
 
 
 @dataclass
@@ -24,6 +29,14 @@ class OfficialRecord:
     metrics: dict[str, float]
     harness_version: str
     time: str
+    code_method: str  # 这条记录的代码评测用的出题方式，见 CODE_METHOD
+
+
+def code_method_of(rec: dict) -> str | None:
+    """记录（或参照条目）的代码评测出题方式；没跑代码评测的返回 None，旧记录没有这一项的算 "plain"。"""
+    if rec.get("code_limit") == 0:
+        return None
+    return rec.get("code_method", LEGACY_CODE_METHOD)
 
 
 def append_record(run_dir: Path, rec: OfficialRecord) -> None:
@@ -61,9 +74,13 @@ def final_checkpoints(run_dir: Path) -> list[Path]:
 
 
 def pending_checkpoints(run_dir: Path, limit: int | None, code_limit: int | None) -> list[Path]:
-    """还没有「同一 limit、同一 code_limit」记录的最终检查点。"""
-    done = {(r["checkpoint"], r.get("limit"), r.get("code_limit")) for r in read_records(run_dir)}
-    return [p for p in final_checkpoints(run_dir) if (p.name, limit, code_limit) not in done]
+    """还没有「同一 limit、同一 code_limit、代码评测用现在这种出题方式」记录的最终检查点。
+
+    旧出题方式留下的记录不算评过：带代码评测的检查点会用现在的方式重评一遍。
+    """
+    done = {(r["checkpoint"], r.get("limit"), r.get("code_limit"), code_method_of(r)) for r in read_records(run_dir)}
+    method = code_method_of({"code_limit": code_limit, "code_method": CODE_METHOD})
+    return [p for p in final_checkpoints(run_dir) if (p.name, limit, code_limit, method) not in done]
 
 
 def load_reference(path: Path) -> dict:

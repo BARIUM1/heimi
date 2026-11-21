@@ -23,7 +23,7 @@ from statistics import median
 
 from minids.gpu import gpu_status
 from minids.logging_io import EVAL_FILE, EVENTS_FILE, METRICS_FILE, SAMPLES_FILE, read_jsonl
-from minids.official.results import OFFICIAL_FILE, latest_per_checkpoint, load_reference
+from minids.official.results import OFFICIAL_FILE, code_method_of, latest_per_checkpoint, load_reference
 
 RUNNING_WITHIN_S = 180.0
 QUIET_WITHIN_S = 1800.0
@@ -255,19 +255,22 @@ _REFERENCE_KEYS = ("label", "params_non_embedding", "limit", "code_limit", "metr
 def official(run_dir: Path, reference_path: Path | None) -> dict:
     """官方评测表：每个检查点一行（latest_per_checkpoint 挑出的那条）加参照行。
 
-    comparable：没有参照时为真；否则当且仅当这一行的 limit、code_limit 与 harness_version 都等于
-    第一条参照的，即样本设置和评测框架版本都相同，才能和参照并排比。official.jsonl 不在 LOG_FILES 里：官方评测不是训练活动，
+    comparable：没有参照时为真；否则当且仅当这一行的 limit、code_limit、harness_version 和代码评测的出题方式
+    （code_method_of）都等于第一条参照的，即样本设置、出题方式和评测框架版本都相同，才能和参照并排比。
+    official.jsonl 不在 LOG_FILES 里：官方评测不是训练活动，
     不能让它推迟"训练最后一次更新"的时间。窗口只读，这里不创建任何文件。
     """
     reference = []
     if reference_path is not None:
         for name, entry in load_reference(reference_path).items():
             if isinstance(entry, dict) and isinstance(entry.get("metrics"), dict):
-                reference.append({"name": name, **{k: entry.get(k) for k in _REFERENCE_KEYS}})
+                reference.append({"name": name, **{k: entry.get(k) for k in _REFERENCE_KEYS}, "code_method": code_method_of(entry)})
     first = reference[0] if reference else None
     rows = []
     for r in latest_per_checkpoint(read_log(run_dir, OFFICIAL_FILE)):
-        same = first is None or all(r.get(k) == first[k] for k in ("limit", "code_limit", "harness_version"))
+        same = first is None or (
+            all(r.get(k) == first[k] for k in ("limit", "code_limit", "harness_version")) and code_method_of(r) == first["code_method"]
+        )
         rows.append({**r, "comparable": same})
     return {"rows": rows, "reference": reference}
 

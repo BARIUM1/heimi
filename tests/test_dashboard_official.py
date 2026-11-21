@@ -5,12 +5,13 @@ import pytest
 
 from dashboard import cli, data
 from dashboard.server import create_app
+from minids.logging_io import append_jsonl
 from minids.official.results import OFFICIAL_FILE, append_record, save_reference
 from tests.helpers_dashboard import FakeWorker, local_client
-from tests.helpers_official import official_record
+from tests.helpers_official import legacy_record, official_record
 
 GPT2 = {"label": "GPT-2 small", "model_id": "openai-community/gpt2", "params_non_embedding": 85_000_000, "limit": None, "code_limit": 500,
-        "metrics": {"blimp_acc": 0.8}, "harness_version": "0.4.13", "time": "t"}
+        "metrics": {"blimp_acc": 0.8}, "harness_version": "0.4.13", "time": "t", "code_method": "healed"}
 
 
 @pytest.fixture
@@ -38,7 +39,7 @@ def test_rows_are_deduplicated_ordered_and_flagged_against_the_reference(run, re
         ("stage1_final.pt", 0.7, True),  # 后来的抽样记录没有盖掉全量的
         ("stage2_final.pt", 0.8, False),  # 没跑代码评测：样本设置和参照不同
     ]
-    assert out["reference"] == [{"name": "gpt2", "label": "GPT-2 small", "params_non_embedding": 85_000_000, "limit": None, "code_limit": 500, "metrics": {"blimp_acc": 0.8}, "harness_version": "0.4.13"}]
+    assert out["reference"] == [{"name": "gpt2", "label": "GPT-2 small", "params_non_embedding": 85_000_000, "limit": None, "code_limit": 500, "metrics": {"blimp_acc": 0.8}, "harness_version": "0.4.13", "code_method": "healed"}]
 
 
 def test_same_settings_as_the_reference_are_comparable_and_no_reference_means_comparable(run, ref):
@@ -56,6 +57,18 @@ def test_a_different_limit_code_limit_or_harness_version_is_not_comparable(run, 
     assert [(r["checkpoint"], r["comparable"]) for r in out["rows"]] == [
         ("stage0_final.pt", False), ("stage1_final.pt", False), ("stage2_final.pt", False), ("stage3_final.pt", True),
     ]
+
+
+def test_a_different_code_prompting_method_is_not_comparable(run, ref, tmp_path):
+    append_jsonl(run / OFFICIAL_FILE, legacy_record("stage0_final.pt", 300))  # 旧出题方式的记录（没有 code_method）
+    append_record(run, official_record("stage1_final.pt", 800))
+    append_jsonl(run / OFFICIAL_FILE, legacy_record("stage2_final.pt", 1800, code_limit=0))  # 没跑代码评测：本来就不可比
+    assert [r["comparable"] for r in data.official(run, ref)["rows"]] == [False, True, False]
+    # 参照是旧出题方式留下的（没有 code_method）：新记录不能和它比，旧记录可以
+    old_ref = tmp_path / "old.json"
+    save_reference(old_ref, "gpt2", {k: v for k, v in GPT2.items() if k != "code_method"})
+    out = data.official(run, old_ref)
+    assert [r["comparable"] for r in out["rows"]] == [True, False, False] and out["reference"][0]["code_method"] == "plain"
 
 
 def test_nothing_recorded_and_no_reference_is_an_empty_answer(run, tmp_path):

@@ -4,8 +4,10 @@ from pathlib import Path
 import pytest
 
 import official_eval
+from minids.logging_io import append_jsonl
 from minids.official.results import OfficialRecord, load_reference, read_records
 from minids.train.checkpoint import CheckpointError
+from tests.helpers_official import legacy_record
 
 
 @pytest.fixture
@@ -34,7 +36,7 @@ def calls(monkeypatch):
         seen.append((name, device, limit, code_limit))
         if name in seen.broken:
             raise CheckpointError(f"检查点 {name} 无法读取")
-        return OfficialRecord(name, name.split("_")[0], 1, 100, 10, limit, code_limit, {"blimp_acc": 0.5}, "0.4.13", "t")
+        return OfficialRecord(name, name.split("_")[0], 1, 100, 10, limit, code_limit, {"blimp_acc": 0.5}, "0.4.13", "t", "healed")
 
     monkeypatch.setattr(official_eval, "evaluate_checkpoint", fake)
     monkeypatch.setattr(official_eval, "ensure_code_data", lambda data_dir: seen.append(("data", str(data_dir))))
@@ -61,6 +63,16 @@ def test_default_evaluates_each_pending_final_checkpoint_once(runs, calls, capsy
     assert _main(runs) == 0 and len(_evals(calls)) == 2  # 第二次没有可评的
     assert "没有待评测" in capsys.readouterr().err
     assert _main(runs, "--force") == 0 and len(_evals(calls)) == 4
+
+
+def test_records_from_the_old_code_prompting_do_not_count_as_evaluated(runs, calls):
+    # 第一次评测（旧出题方式）留下的记录没有 code_method：不加 --force 也会用现在的方式重评
+    append_jsonl(runs / "heimi" / "official.jsonl", legacy_record("stage0_final.pt", 300))
+    append_jsonl(runs / "heimi" / "official.jsonl", legacy_record("stage1_final.pt", 800))
+    assert _main(runs) == 0
+    assert _evals(calls) == [("stage0_final.pt", "cpu", None, 500), ("stage1_final.pt", "cpu", None, 500)]
+    assert [r.get("code_method") for r in read_records(runs / "heimi")] == [None, None, "healed", "healed"]
+    assert _main(runs) == 0 and len(_evals(calls)) == 2  # 重评过一次就不再重评
 
 
 def test_named_checkpoint_and_sampling_options(runs, calls):
@@ -147,7 +159,7 @@ def test_a_checkpoint_without_ladder_config_is_named_and_the_rest_continue(runs,
     def real_then_fake(ckpt, device, data_dir, **kw):
         if Path(ckpt).name == "stage0_final.pt":
             return official_run.evaluate_checkpoint(ckpt, device, data_dir, **kw)
-        return OfficialRecord("stage1_final.pt", "stage1", 1, 100, 10, None, 500, {"blimp_acc": 0.5}, "0.4.13", "t")
+        return OfficialRecord("stage1_final.pt", "stage1", 1, 100, 10, None, 500, {"blimp_acc": 0.5}, "0.4.13", "t", "healed")
 
     monkeypatch.setattr(official_eval, "evaluate_checkpoint", real_then_fake)
     assert _main(runs) == 1

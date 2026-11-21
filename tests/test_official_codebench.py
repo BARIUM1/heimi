@@ -1,7 +1,7 @@
 import pytest
 
 from minids.official.codebench import (
-    edit_similarity, first_code_line, infill_scores, lines_match, repobench_prompt, repobench_scores, sample_rows,
+    edit_similarity, first_code_line, infill_scores, infill_suffix, lines_match, repobench_prompt, repobench_scores, sample_rows,
 )
 
 ROW = {
@@ -83,7 +83,17 @@ def test_infill_compares_the_first_generated_line_with_the_reference_line():
         return ["return a + b\n    junk", "x = 2"][len(calls) - 1]
 
     assert infill_scores(complete, rows) == {"em": 0.5, "n": 2}
-    assert calls == [("def f(a, b):\n", "\n"), ("p", "s")]
+    # 待填那一行行末的换行交到后缀开头
+    assert calls == [("def f(a, b):\n", "\n\n"), ("p", "\ns")]
+
+
+def test_infill_suffix_takes_the_line_ending_of_the_missing_line():
+    row = {"prompt": "def f():\n", "canonical_solution": "    x = 1\n", "suffix": "    return x\n"}
+    assert infill_suffix(row) == "\n    return x\n"
+    # 整篇文本一个字符都没变：提示 + 答案（去掉行末换行）+ 新后缀 == 提示 + 答案 + 原后缀
+    assert row["prompt"] + row["canonical_solution"][:-1] + infill_suffix(row) == row["prompt"] + row["canonical_solution"] + row["suffix"]
+    assert infill_suffix(dict(row, suffix="")) == "\n"
+    assert infill_suffix(dict(row, canonical_solution="    x = 1")) == "    return x\n"  # 答案不以换行结尾：后缀不动
 
 
 def test_scoring_nothing_is_an_error():

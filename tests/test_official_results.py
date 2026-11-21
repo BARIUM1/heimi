@@ -1,10 +1,12 @@
 import sys
 from dataclasses import asdict
 
+from minids.logging_io import append_jsonl
 from minids.official.results import (
-    append_record, final_checkpoints, latest_per_checkpoint, load_reference, pending_checkpoints, read_records, save_reference,
+    CODE_METHOD, append_record, code_method_of, final_checkpoints, latest_per_checkpoint, load_reference, pending_checkpoints,
+    read_records, save_reference,
 )
-from tests.helpers_official import official_record
+from tests.helpers_official import legacy_record, official_record
 
 
 def test_records_round_trip_and_a_missing_file_is_empty(tmp_path):
@@ -42,6 +44,32 @@ def test_pending_lists_final_checkpoints_without_a_record_for_these_settings(tmp
     assert [p.name for p in pending_checkpoints(tmp_path, None, 500)] == ["stage1_final.pt"]
     assert [p.name for p in pending_checkpoints(tmp_path, 50, 500)] == ["stage0_final.pt", "stage1_final.pt"]
     assert pending_checkpoints(tmp_path / "nope", None, 500) == []
+
+
+def test_code_method_of_a_record_is_none_without_code_evaluation_and_plain_when_missing():
+    assert code_method_of(asdict(official_record("stage0_final.pt", 300))) == CODE_METHOD == "healed"
+    assert code_method_of(legacy_record("stage0_final.pt", 300)) == "plain"
+    assert code_method_of(asdict(official_record("stage0_final.pt", 300, code_limit=0))) is None
+    assert code_method_of(legacy_record("stage0_final.pt", 300, code_limit=0)) is None
+
+
+def test_records_made_with_the_old_code_prompting_are_still_pending(tmp_path):
+    ck = tmp_path / "ckpt"
+    ck.mkdir()
+    for name in ("stage0_final.pt", "stage1_final.pt"):
+        (ck / name).write_bytes(b"x")
+    append_jsonl(tmp_path / "official.jsonl", legacy_record("stage0_final.pt", 300))  # 带代码评测、旧出题方式：要重评
+    append_jsonl(tmp_path / "official.jsonl", legacy_record("stage1_final.pt", 800, code_limit=0))  # 没跑代码评测：出题方式无关
+    assert [p.name for p in pending_checkpoints(tmp_path, None, 500)] == ["stage0_final.pt", "stage1_final.pt"]
+    assert [p.name for p in pending_checkpoints(tmp_path, None, 0)] == ["stage0_final.pt"]
+    append_record(tmp_path, official_record("stage0_final.pt", 300))
+    assert [p.name for p in pending_checkpoints(tmp_path, None, 500)] == ["stage1_final.pt"]
+
+
+def test_a_rerun_with_the_current_code_prompting_replaces_the_old_record_in_the_table():
+    old = legacy_record("stage0_final.pt", 300, repobench_em=0.03)
+    new = asdict(official_record("stage0_final.pt", 300, repobench_em=0.10))
+    assert [r["metrics"]["repobench_em"] for r in latest_per_checkpoint([old, new])] == [0.10]
 
 
 def test_reference_file_round_trips_and_keeps_other_entries(tmp_path):

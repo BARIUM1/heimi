@@ -14,7 +14,7 @@ from minids.logging_io import now_iso
 from minids.official.codebench import infill_scores, repobench_scores, sample_rows
 from minids.official.codedata import INFILL_LOCAL, REPOBENCH_LOCAL, load_infill, load_repobench
 from minids.official.completers import heimi_infill, heimi_next_line
-from minids.official.results import OfficialRecord
+from minids.official.results import CODE_METHOD, OfficialRecord
 from minids.train.checkpoint import CheckpointError, load_model
 
 CODE_LIMIT = 500
@@ -74,5 +74,5 @@ def evaluate_checkpoint(
     return OfficialRecord(
         checkpoint=ckpt.name, stage=stage, global_step=global_step, tokens_total=tokens_total,
         params_non_embedding=model.count_params(), limit=limit, code_limit=code_limit, metrics=metrics,
-        harness_version=harness_version(), time=now_iso(),
+        harness_version=harness_version(), time=now_iso(), code_method=CODE_METHOD,
     )

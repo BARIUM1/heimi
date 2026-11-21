@@ -77,13 +77,22 @@ def repobench_scores(complete: Callable[[str], str], rows: Sequence[dict]) -> di
     return {"em": round(hits / n, 5), "es": round(similarity / n, 5), "n": n}
 
 
+def infill_suffix(row: dict) -> str:
+    """交给模型的后缀：待填那一行行末的换行算在后缀开头。
+
+    原数据把这个换行算在答案末尾，后缀从下一行的缩进开始。挪过来以后，后缀和提示一样是在一串空白的起点切开的
+    （原因见 healing.py），整篇文本一个字符都没变。答案不以换行结尾的题不动。
+    """
+    return "\n" + row["suffix"] if row["canonical_solution"].endswith("\n") else row["suffix"]
+
+
 def infill_scores(complete: Callable[[str, str], str], rows: Sequence[dict]) -> dict:
-    """complete 收到 (prompt, suffix)，返回生成的文本；比较第一行与参考答案，返回 EM 和条数。"""
+    """complete 收到 (prompt, infill_suffix)，返回生成的文本；比较第一行与参考答案，返回 EM 和条数。"""
     if not rows:
         raise ValueError("没有可计分的单行填空题目")
     hits = 0
     for row in rows:
-        generated = complete(row["prompt"], row["suffix"])
+        generated = complete(row["prompt"], infill_suffix(row))
         hits += generated.split("\n", 1)[0].strip() == row["canonical_solution"].strip()
     n = len(rows)
     return {"em": round(hits / n, 5), "n": n}
