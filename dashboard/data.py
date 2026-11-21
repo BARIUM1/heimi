@@ -249,14 +249,14 @@ def overview(run_dir: Path) -> dict:
     return {"eval": eval_out, "growth": growth, "params": params}
 
 
-_REFERENCE_KEYS = ("label", "params_non_embedding", "limit", "code_limit", "metrics")
+_REFERENCE_KEYS = ("label", "params_non_embedding", "limit", "code_limit", "metrics", "harness_version")
 
 
 def official(run_dir: Path, reference_path: Path | None) -> dict:
     """官方评测表：每个检查点一行（latest_per_checkpoint 挑出的那条）加参照行。
 
-    comparable：没有参照时为真；否则当且仅当这一行的 limit 与 code_limit 都等于第一条参照的，
-    即样本设置相同，才能和参照并排比。official.jsonl 不在 LOG_FILES 里：官方评测不是训练活动，
+    comparable：没有参照时为真；否则当且仅当这一行的 limit、code_limit 与 harness_version 都等于
+    第一条参照的，即样本设置和评测框架版本都相同，才能和参照并排比。official.jsonl 不在 LOG_FILES 里：官方评测不是训练活动，
     不能让它推迟"训练最后一次更新"的时间。窗口只读，这里不创建任何文件。
     """
     reference = []
@@ -267,7 +267,7 @@ def official(run_dir: Path, reference_path: Path | None) -> dict:
     first = reference[0] if reference else None
     rows = []
     for r in latest_per_checkpoint(read_log(run_dir, OFFICIAL_FILE)):
-        same = first is None or (r.get("limit") == first["limit"] and r.get("code_limit") == first["code_limit"])
+        same = first is None or all(r.get(k) == first[k] for k in ("limit", "code_limit", "harness_version"))
         rows.append({**r, "comparable": same})
     return {"rows": rows, "reference": reference}
 

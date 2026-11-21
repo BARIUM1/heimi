@@ -313,7 +313,7 @@ button.ghost { background: transparent; color: var(--accent); padding: 5px 12px;
           <tbody id="official-rows"></tbody>
         </table>
       </div>
-      <p class="hint">读法：BLiMP 的随机水平是 50%，HellaSwag 是 25%；bits/byte 越低越好，其余越高越好；单行填空是精确匹配，不是官方的 pass@1；带"抽样"标记的行样本数与参照不同，不能直接比。</p>
+      <p class="hint">读法：BLiMP 的随机水平是 50%，HellaSwag 是 25%；bits/byte 越低越好，其余越高越好；单行填空是精确匹配，不是官方的 pass@1；带"抽样"或"设置与参照不同"标记的行，样本设置或评测框架版本与参照不同，不能直接和参照行比。</p>
     </section>
 
     <section id="samples">
@@ -802,11 +802,11 @@ function renderOfficial() {
     return;
   }
   const hasRef = o.reference.length > 0;
-  const rows = o.reference.map((r) => line(`${r.label}（参照）`, r.params_non_embedding, r.metrics, r.code_limit !== 0));
+  const rows = o.reference.map((r) => line(`${r.label}（参照）${r.limit != null ? "（抽样）" : ""}`, r.params_non_embedding, r.metrics, r.code_limit !== 0));
   for (const r of o.rows) {
     const tags = [];
-    const sampled = !r.comparable || (!hasRef && (r.limit != null || r.code_limit > 0));
-    if (sampled) tags.push("抽样");
+    if (r.limit != null) tags.push("抽样");
+    else if (hasRef && !r.comparable) tags.push("设置与参照不同");
     if (r.code_limit === 0) tags.push("无代码评测");
     const name = (r.checkpoint === `${r.stage}_final.pt` ? r.stage : r.checkpoint) + (tags.length ? `（${tags.join("，")}）` : "");
     rows.push(line(name, r.params_non_embedding, r.metrics, r.code_limit !== 0));

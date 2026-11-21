@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -37,13 +38,24 @@ def test_rows_are_deduplicated_ordered_and_flagged_against_the_reference(run, re
         ("stage1_final.pt", 0.7, True),  # 后来的抽样记录没有盖掉全量的
         ("stage2_final.pt", 0.8, False),  # 没跑代码评测：样本设置和参照不同
     ]
-    assert out["reference"] == [{"name": "gpt2", "label": "GPT-2 small", "params_non_embedding": 85_000_000, "limit": None, "code_limit": 500, "metrics": {"blimp_acc": 0.8}}]
+    assert out["reference"] == [{"name": "gpt2", "label": "GPT-2 small", "params_non_embedding": 85_000_000, "limit": None, "code_limit": 500, "metrics": {"blimp_acc": 0.8}, "harness_version": "0.4.13"}]
 
 
 def test_same_settings_as_the_reference_are_comparable_and_no_reference_means_comparable(run, ref):
     append_record(run, official_record("stage0_final.pt", 300))
     assert data.official(run, ref)["rows"][0]["comparable"] is True
     assert data.official(run, None)["rows"][0]["comparable"] is True
+
+
+def test_a_different_limit_code_limit_or_harness_version_is_not_comparable(run, ref):
+    append_record(run, official_record("stage0_final.pt", 300, code_limit=0))
+    append_record(run, official_record("stage1_final.pt", 800, code_limit=None))  # 全量代码评测：比参照更完整，仍不是同一设置
+    append_record(run, replace(official_record("stage2_final.pt", 1800), harness_version="0.5.0"))
+    append_record(run, official_record("stage3_final.pt", 2800))
+    out = data.official(run, ref)
+    assert [(r["checkpoint"], r["comparable"]) for r in out["rows"]] == [
+        ("stage0_final.pt", False), ("stage1_final.pt", False), ("stage2_final.pt", False), ("stage3_final.pt", True),
+    ]
 
 
 def test_nothing_recorded_and_no_reference_is_an_empty_answer(run, tmp_path):
@@ -95,3 +107,13 @@ def test_page_isolates_official_failures_from_the_connection_banner():
     assert "官方评测记录读不出来" in html
     fetch = next(line for line in html.splitlines() if "/official`" in line)
     assert ".catch(" in fetch
+
+
+def test_page_tags_rows_by_what_actually_differs_from_the_reference():
+    html = (Path("dashboard/static") / "index.html").read_text(encoding="utf-8")
+    assert "设置与参照不同" in html
+    # 抽样只看这一行自己的 limit；设置不同的标记只在有参照且不可比时出现
+    assert 'if (r.limit != null) tags.push("抽样");' in html
+    assert 'else if (hasRef && !r.comparable) tags.push("设置与参照不同");' in html
+    # 参照行自己抽样时也带标记
+    assert 'r.limit != null ? "（抽样）" : ""' in html
