@@ -1,0 +1,24 @@
+{
+  "gpt2": {
+    "label": "GPT-2 small",
+    "model_id": "openai-community/gpt2",
+    "params_non_embedding": 85056000,
+    "limit": null,
+    "code_limit": 500,
+    "metrics": {
+      "blimp_acc": 0.8214626865671641,
+      "hellaswag_acc": 0.2891854212308305,
+      "hellaswag_acc_norm": 0.31139215295757816,
+      "wikitext_word_perplexity": 37.36982826494195,
+      "wikitext_byte_perplexity": 1.9682003590303168,
+      "wikitext_bits_per_byte": 0.9768770917473827,
+      "repobench_em": 0.044,
+      "repobench_es": 32.802,
+      "repobench_n": 500,
+      "infill_em_prefix": 0.026,
+      "infill_n": 500
+    },
+    "harness_version": "0.4.13",
+    "time": "2026-11-21T12:39:01-05:00"
+  }
+}

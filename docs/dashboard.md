@@ -20,7 +20,7 @@ python dashboard.py --runs runs/
 
 服务只绑 `127.0.0.1`，别的机器访问不到；它也只接受以 `127.0.0.1` 或 `localhost` 为地址的请求，所以你开着窗口时浏览到的其他网页冒用不了它。还没有任何训练记录时也能打开，页面会提示先去开始一次训练。
 
-## 四个区域
+## 五个区域
 
 **成长总览。** 横轴是累计读过的 token，纵轴是损失。细灰线是训练损失，蓝色与橙色带点的线是 web 与 code 两份验证集上的损失。每次增长处有一条竖线，顶上写着 "13M → 26M 加深" 这样的标注。下面一张小图是参数量的阶梯。把鼠标移到图上会出现一条竖线和一个提示框；移到评测点附近会吸过去并列出两条验证损失。焦点在图上时，左右方向键在评测点之间移动。图下面可以展开一张表，评测的全部数字都在里面。
 
@@ -41,6 +41,20 @@ python dashboard.py --runs runs/
 ![成长样本墙](dashboard/samples.jpg)
 
 **试玩台。** 自己写前缀让它接。后缀留空是普通续写；填了后缀就是填空，它只补中间那一行。可以选任意一次训练的任意检查点，勾选"并排比较"再选第二个检查点，就能看同一个开头在两个阶段分别写成什么样。
+
+**官方评测。** 一张表，把黑米每个阶段的检查点和同一台机器上测出来的 GPT-2 small 放在一起：第一行是 GPT-2（参照），后面每个评过的检查点一行，按训练进度排。列是参数量、BLiMP、HellaSwag、WikiText bits/byte、RepoBench 的 EM 与 ES、单行填空的 FIM 与仅前缀。表下一句话写着随机水平和每列是越高还是越低越好。每个数字的意思、怎么运行见 [`official-eval.md`](official-eval.md)。
+
+![官方评测](dashboard/official.jpg)
+
+行名后面可能带标记：
+
+| 标记 | 含义 |
+|---|---|
+| （抽样） | 这一行的三个标准任务只评了一部分题（用了 `--limit`）。参照行也可能带这个标记 |
+| （设置与参照不同） | 这一行全量评了，但它的评测设置或评测框架版本和参照行不一样，不能直接和参照行比 |
+| （无代码评测） | 这一行没有跑代码评测（用了 `--skip-code`），代码的几列显示 "—" 而不是 0 |
+
+没有结果时，这一格显示怎么运行：`python official_eval.py --run <run 名>`（训练停着的时候）。如果官方评测的记录文件读不出来，只有这一格显示"官方评测记录读不出来，其他区域不受影响"，别的区域照常。这个区域和别的一样只读：窗口不会创建或修改 `official.jsonl`，它只由命令写。
 
 ## 关于试玩台的几件事
 
@@ -77,4 +91,4 @@ python dashboard.py --runs runs/
 | `dashboard/static/index.html` | 页面本身，样式与脚本都在里面 |
 | `dashboard/static/chart.umd.min.js` | Chart.js 4.6.1（MIT 许可），随仓库分发，页面不访问外网 |
 
-接口一览：`GET /api/runs`、`/api/runs/{run}/metrics?since=`、`/eval`、`/events`、`/samples`、`/overview`、`GET /api/status?run=`、`POST /api/generate`。
+接口一览：`GET /api/runs`、`/api/runs/{run}/metrics?since=`、`/eval`、`/events`、`/samples`、`/overview`、`/official`、`GET /api/status?run=`、`POST /api/generate`。
