@@ -45,3 +45,13 @@ def write_code_data(d: Path) -> Path:
     ]
     (d / INFILL_LOCAL).write_text("\n".join(json.dumps(r) for r in rows) + "\n\n", encoding="utf-8")
     return d
+
+
+def official_record(checkpoint, tokens_total, limit=None, code_limit=500, **metrics):
+    from minids.official.results import OfficialRecord
+
+    return OfficialRecord(
+        checkpoint=checkpoint, stage=checkpoint.split("_")[0], global_step=tokens_total // 100, tokens_total=tokens_total,
+        params_non_embedding=1000, limit=limit, code_limit=code_limit, metrics=metrics or {"blimp_acc": 0.5},
+        harness_version="0.4.13", time="2026-11-09T12:00:00-05:00",
+    )
