@@ -49,6 +49,9 @@ def continuation_logprobs(
     for i, (ctx, cont) in enumerate(pairs):
         if not cont:
             continue
+        if not ctx:
+            # 没有上下文就没有位置可以用来预测续写的第一个 token；encode_pair / rolling_windows 都会补前缀 token
+            raise ValueError("上下文为空，无法给续写打分（空上下文应先用前缀 token 代替，见 encode_pair）")
         if len(cont) > max_len:
             raise ValueError(f"续写有 {len(cont)} 个 token，超过窗口 {max_len}；这种文本应走 rolling_logprob")
         inp = (list(ctx) + list(cont))[-(max_len + 1) :][:-1]

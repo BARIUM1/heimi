@@ -35,12 +35,17 @@ def read_records(run_dir: Path) -> list[dict]:
     return read_jsonl(Path(run_dir) / OFFICIAL_FILE)
 
 
+def completeness(rec: dict) -> tuple[bool, bool]:
+    """记录（或参照条目）的完整程度，越大越完整：框架任务全量 > 抽样，其次带代码评测 > 不带。"""
+    return (rec.get("limit") is None, rec.get("code_limit") != 0)
+
+
 def latest_per_checkpoint(records: list[dict]) -> list[dict]:
     """每个检查点只留一条：框架任务全量 > 抽样，其次带代码评测 > 不带，再次后写入的。
     这样小样本试跑不会盖掉全量结果。结果按 (tokens_total, global_step) 升序。"""
     best: dict[str, tuple[tuple, dict]] = {}
     for i, r in enumerate(records):
-        key = (r.get("limit") is None, r.get("code_limit") != 0, i)
+        key = (*completeness(r), i)
         cur = best.get(r["checkpoint"])
         if cur is None or key > cur[0]:
             best[r["checkpoint"]] = (key, r)

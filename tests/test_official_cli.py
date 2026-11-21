@@ -130,7 +130,8 @@ def test_reference_run_prepares_code_data_before_evaluating(tmp_path, calls, mon
     assert official_eval.main(["--reference", "gpt2", "--device", "cpu", "--data-dir", str(tmp_path), "--reference-out", str(out)]) == 0
     assert order == ["data", "eval"]
     order.clear()
-    assert official_eval.main(["--reference", "gpt2", "--device", "cpu", "--skip-code", "--data-dir", str(tmp_path), "--reference-out", str(out)]) == 0
+    out2 = tmp_path / "other.json"  # 另写一个文件：不带代码评测的一次不会撞上上面那条更完整的
+    assert official_eval.main(["--reference", "gpt2", "--device", "cpu", "--skip-code", "--data-dir", str(tmp_path), "--reference-out", str(out2)]) == 0
     assert order == ["eval"]
 
 
@@ -151,4 +152,74 @@ def test_a_checkpoint_without_ladder_config_is_named_and_the_rest_continue(runs,
     monkeypatch.setattr(official_eval, "evaluate_checkpoint", real_then_fake)
     assert _main(runs) == 1
     assert [r["checkpoint"] for r in read_records(runs / "heimi")] == ["stage1_final.pt"]
-    assert "stage0_final.pt" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "stage0_final.pt" in err and "内容不完整" in err
+
+
+def _reference_main(tmp_path, out, *extra):
+    return official_eval.main(["--reference", "gpt2", "--device", "cpu", "--data-dir", str(tmp_path / "eval"), "--reference-out", str(out), *extra])
+
+
+@pytest.fixture
+def ref_calls(calls, monkeypatch):
+    """假的参照评测：记下收到的 (limit, code_limit)，返回带这两项的条目。"""
+    seen = []
+
+    def fake_reference(device, data_dir, limit=None, code_limit=500, **kwargs):
+        seen.append((limit, code_limit))
+        return {"label": "GPT-2 small", "metrics": {"blimp_acc": 0.5}, "limit": limit, "code_limit": code_limit}
+
+    monkeypatch.setattr(official_eval, "evaluate_reference", fake_reference)
+    return seen
+
+
+def _full_reference(out):
+    from minids.official.results import save_reference
+
+    save_reference(out, "gpt2", {"label": "GPT-2 small", "metrics": {"blimp_acc": 0.8}, "limit": None, "code_limit": 500})
+
+
+def test_a_sampled_reference_run_does_not_replace_a_more_complete_one(tmp_path, ref_calls, calls, capsys):
+    out = tmp_path / "reference.json"
+    _full_reference(out)
+    assert _reference_main(tmp_path, out, "--limit", "20") == 2
+    err = capsys.readouterr().err
+    assert "--force" in err and "--reference-out" in err and "更完整" in err
+    assert ref_calls == [] and calls == []  # 评测和下载都没开始
+    assert load_reference(out)["gpt2"]["metrics"] == {"blimp_acc": 0.8}
+    assert _reference_main(tmp_path, out, "--skip-code") == 2  # 不带代码评测同样算不够完整
+    assert ref_calls == []
+
+
+def test_force_lets_a_less_complete_reference_run_overwrite(tmp_path, ref_calls):
+    out = tmp_path / "reference.json"
+    _full_reference(out)
+    assert _reference_main(tmp_path, out, "--limit", "20", "--force") == 0
+    assert ref_calls == [(20, 500)] and load_reference(out)["gpt2"]["limit"] == 20
+
+
+def test_an_equally_or_more_complete_reference_run_overwrites(tmp_path, ref_calls):
+    out = tmp_path / "reference.json"
+    from minids.official.results import save_reference
+
+    save_reference(out, "gpt2", {"metrics": {}, "limit": 20, "code_limit": 500})
+    assert _reference_main(tmp_path, out, "--limit", "20") == 0  # 一样完整
+    assert _reference_main(tmp_path, out) == 0  # 更完整
+    assert ref_calls == [(20, 500), (None, 500)] and load_reference(out)["gpt2"]["limit"] is None
+
+
+def test_reference_run_with_no_existing_file_or_a_damaged_one_just_writes(tmp_path, ref_calls):
+    out = tmp_path / "reference.json"
+    assert _reference_main(tmp_path, out, "--limit", "5") == 0
+    bad = tmp_path / "bad.json"
+    bad.write_text("{broken", encoding="utf-8")
+    assert _reference_main(tmp_path, bad, "--limit", "5") == 0
+    assert ref_calls == [(5, 500), (5, 500)]
+
+
+@pytest.mark.parametrize("flag", ["--limit", "--code-limit"])
+@pytest.mark.parametrize("bad", ["0", "-3", "1.5", "abc"])
+def test_limit_options_must_be_integers_of_at_least_one(runs, calls, flag, bad, capsys):
+    with pytest.raises(SystemExit) as e:
+        _main(runs, flag, bad)
+    assert e.value.code == 2 and _evals(calls) == [] and flag in capsys.readouterr().err

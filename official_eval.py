@@ -22,7 +22,14 @@ from pathlib import Path
 from minids.gpu import gpu_status
 from minids.official.codedata import ensure_code_data
 from minids.official.reference import evaluate_reference
-from minids.official.results import append_record, final_checkpoints, pending_checkpoints, save_reference
+from minids.official.results import (
+    append_record,
+    completeness,
+    final_checkpoints,
+    load_reference,
+    pending_checkpoints,
+    save_reference,
+)
 from minids.official.run import CODE_LIMIT, evaluate_checkpoint
 from minids.train.checkpoint import CheckpointError
 
@@ -49,6 +56,17 @@ def _default_device() -> str:
         return "cpu"
 
 
+def _positive_int(text: str) -> int:
+    """argparse 的类型：必须是 ≥ 1 的整数，其余当作用法错误。"""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"需要 ≥ 1 的整数，收到 {text!r}") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"需要 ≥ 1 的整数，收到 {value}")
+    return value
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="官方基准评测（lm-evaluation-harness + 代码评测）")
     g = p.add_mutually_exclusive_group(required=True)
@@ -57,11 +75,11 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--runs", type=Path, default=Path("runs"))
     p.add_argument("--ckpt", action="append", help="只评这个检查点（文件名，可重复）")
     p.add_argument("--device", choices=["cuda", "cpu"], default=_default_device())
-    p.add_argument("--limit", type=int, default=None, help="每个框架任务最多评多少条（默认全量）")
-    p.add_argument("--code-limit", type=int, default=CODE_LIMIT, help="代码评测抽样条数")
+    p.add_argument("--limit", type=_positive_int, default=None, help="每个框架任务最多评多少条（默认全量）")
+    p.add_argument("--code-limit", type=_positive_int, default=CODE_LIMIT, help="代码评测抽样条数")
     p.add_argument("--code-all", action="store_true", help="代码评测用全量")
     p.add_argument("--skip-code", action="store_true", help="不跑代码评测")
-    p.add_argument("--force", action="store_true", help="已评过的也重评")
+    p.add_argument("--force", action="store_true", help="已评过的也重评；评参照模型时，允许用不够完整的一次评测覆盖参照文件里更完整的那条")
     p.add_argument("--allow-busy-gpu", action="store_true", help="显卡正被占用也照样评")
     p.add_argument("--data-dir", type=Path, default=REPO_ROOT / "data" / "eval")
     p.add_argument("--reference-out", type=Path, default=REPO_ROOT / "docs" / "official" / "reference.json")
@@ -116,6 +134,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
     if args.reference:
+        # 抽样或不带代码评测的一次，不能悄悄盖掉参照文件里更完整的那条；评测和下载开始之前就拦下
+        existing = load_reference(args.reference_out).get(args.reference)
+        if (
+            isinstance(existing, dict)
+            and not args.force
+            and completeness({"limit": args.limit, "code_limit": code_limit}) < completeness(existing)
+        ):
+            _err(
+                f"参照文件 {args.reference_out} 里已有更完整的 {args.reference} 评测结果，这一次（抽样或不带代码评测）会把它盖掉。"
+                "两条出路：加 --force 确认覆盖；或加 --reference-out <别的路径> 写到别处。"
+            )
+            return 2
         # 代码评测数据先备齐，免得慢的框架任务跑完才发现缺文件
         if code_limit != 0:
             ensure_code_data(args.data_dir)

@@ -48,6 +48,11 @@ def test_long_context_is_cut_from_the_left_and_the_continuation_kept(model):
     full = continuation_logprobs(model, [(ctx, cont)], "cpu", max_len=64)[0]
     kept = continuation_logprobs(model, [(ctx[-(64 + 1 - len(cont)) :], cont)], "cpu", max_len=64)[0]
     assert math.isclose(full[0], kept[0], rel_tol=1e-6, abs_tol=1e-6)
+    # 再对照独立的直接算法：保留的上下文恰为 max_len + 1 - len(cont) 个 token，共用的切片写错也过不了
+    cut = ctx[-(64 + 1 - len(cont)) :]
+    assert len(cut) == 64 + 1 - len(cont)
+    want, want_greedy = _direct(model, cut, cont)
+    assert math.isclose(full[0], want, rel_tol=1e-4, abs_tol=1e-4) and full[1] == want_greedy
 
 
 def test_greedy_flag_is_true_only_when_every_token_is_the_models_first_choice(model):
@@ -60,6 +65,12 @@ def test_greedy_flag_is_true_only_when_every_token_is_the_models_first_choice(mo
 
 def test_empty_continuation_scores_zero_without_running_the_model():
     assert continuation_logprobs(None, [([5], [])], "cpu", 64) == [(0.0, True)]
+
+
+def test_an_empty_context_with_a_continuation_is_refused_but_an_empty_pair_is_not():
+    with pytest.raises(ValueError, match="上下文为空"):
+        continuation_logprobs(None, [([], [5, 6])], "cpu", 64)
+    assert continuation_logprobs(None, [([], [])], "cpu", 64) == [(0.0, True)]
 
 
 def test_a_continuation_longer_than_the_context_window_is_refused(model):
