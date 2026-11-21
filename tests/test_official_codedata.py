@@ -54,3 +54,14 @@ def test_loaders_return_only_the_fields_the_scorers_need(tmp_path):
     }
     inf = load_infill(d / INFILL_LOCAL)  # 文件末尾的空行不算一条
     assert len(inf) == 3 and inf[0] == {"task_id": "t0", "prompt": "def f(a, b):\n", "suffix": "\n", "canonical_solution": "    return a + b\n"}
+
+
+@pytest.mark.parametrize("answer", ["    return a + b", "    x = 1\n    return x\n", ""])
+def test_infill_rows_whose_answer_is_not_one_newline_terminated_line_are_refused(tmp_path, answer):
+    import json
+
+    row = {"task_id": "SingleLineInfilling/HumanEval/0/L0", "prompt": "def f(a, b):\n", "suffix": "", "canonical_solution": answer}
+    path = tmp_path / INFILL_LOCAL
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="HumanEval/0/L0.*单行填空"):
+        load_infill(path)

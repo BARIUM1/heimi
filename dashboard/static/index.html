@@ -802,11 +802,13 @@ function renderOfficial() {
     return;
   }
   const hasRef = o.reference.length > 0;
-  const rows = o.reference.map((r) => line(`${r.label}（参照）${r.limit != null ? "（抽样）" : ""}`, r.params_non_embedding, r.metrics, r.code_limit !== 0));
+  const refTags = (r) => (r.limit != null ? "（抽样）" : "") + (r.code_method === "plain" ? "（旧出题方式）" : "");
+  const rows = o.reference.map((r) => line(`${r.label}（参照）${refTags(r)}`, r.params_non_embedding, r.metrics, r.code_limit !== 0));
   for (const r of o.rows) {
     const tags = [];
     if (r.limit != null) tags.push("抽样");
-    else if (hasRef && !r.comparable) tags.push("设置与参照不同");
+    // 抽样的行本来就不能和参照比；只有出题方式也不同时才再标一句
+    if (hasRef && !r.comparable && (r.limit == null || r.same_method === false)) tags.push("设置与参照不同");
     if (r.code_limit === 0) tags.push("无代码评测");
     const name = (r.checkpoint === `${r.stage}_final.pt` ? r.stage : r.checkpoint) + (tags.length ? `（${tags.join("，")}）` : "");
     rows.push(line(name, r.params_non_embedding, r.metrics, r.code_limit !== 0));

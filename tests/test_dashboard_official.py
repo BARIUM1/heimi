@@ -69,6 +69,15 @@ def test_a_different_code_prompting_method_is_not_comparable(run, ref, tmp_path)
     save_reference(old_ref, "gpt2", {k: v for k, v in GPT2.items() if k != "code_method"})
     out = data.official(run, old_ref)
     assert [r["comparable"] for r in out["rows"]] == [True, False, False] and out["reference"][0]["code_method"] == "plain"
+    assert [r["same_method"] for r in out["rows"]] == [True, False, False]
+    assert [r["same_method"] for r in data.official(run, None)["rows"]] == [True, True, True]  # 没有参照就无所谓不同
+
+
+def test_a_sampled_row_still_reports_whether_its_code_prompting_matches_the_reference(run, ref):
+    # 抽样的行本来就不可比；出题方式是否相同要单独给出来，窗口靠它决定要不要再标一句
+    append_jsonl(run / OFFICIAL_FILE, legacy_record("stage0_final.pt", 300, limit=50))
+    append_record(run, official_record("stage1_final.pt", 800, limit=50))
+    assert [(r["comparable"], r["same_method"]) for r in data.official(run, ref)["rows"]] == [(False, False), (False, True)]
 
 
 def test_nothing_recorded_and_no_reference_is_an_empty_answer(run, tmp_path):
@@ -127,6 +136,6 @@ def test_page_tags_rows_by_what_actually_differs_from_the_reference():
     assert "设置与参照不同" in html
     # 抽样只看这一行自己的 limit；设置不同的标记只在有参照且不可比时出现
     assert 'if (r.limit != null) tags.push("抽样");' in html
-    assert 'else if (hasRef && !r.comparable) tags.push("设置与参照不同");' in html
-    # 参照行自己抽样时也带标记
-    assert 'r.limit != null ? "（抽样）" : ""' in html
+    assert 'if (hasRef && !r.comparable && (r.limit == null || r.same_method === false)) tags.push("设置与参照不同");' in html
+    # 参照行自己抽样时也带标记；参照是旧出题方式留下的，也写出来
+    assert 'r.limit != null ? "（抽样）" : ""' in html and 'r.code_method === "plain" ? "（旧出题方式）" : ""' in html

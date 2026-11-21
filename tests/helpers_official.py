@@ -1,4 +1,4 @@
-"""官方评测测试共用：记录提示长度的脚本模型、迷你代码评测数据、造记录的小函数。"""
+"""官方评测测试共用：手写词表的分词器、按脚本打分的假模型、迷你代码评测数据、造记录的小函数。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import torch
 from torch import nn
 
 from minids.official.codedata import INFILL_LOCAL, REPOBENCH_LOCAL
-from tests.helpers_train import ScriptedModel
 
 
 class PieceTok:
@@ -79,21 +78,6 @@ class RankedModel(nn.Module):
             logits, _ = self(idx)
             idx = torch.cat([idx, logits[:, -1].argmax(dim=-1, keepdim=True)], dim=1)
         return idx
-
-
-class SpyScripted(ScriptedModel):
-    """记下每次 generate 收到的序列长度，和第一次收到的整段提示。"""
-
-    def __init__(self, script, seq_len=64):
-        super().__init__(script, seq_len)
-        self.lengths: list[int] = []
-        self.first: list[int] | None = None
-
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
-        self.lengths.append(idx.shape[1])
-        if self.first is None:
-            self.first = idx[0].tolist()
-        return super().generate(idx, max_new_tokens, temperature, top_k)
 
 
 def write_code_data(d: Path) -> Path:

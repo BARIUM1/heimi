@@ -257,6 +257,7 @@ def official(run_dir: Path, reference_path: Path | None) -> dict:
 
     comparable：没有参照时为真；否则当且仅当这一行的 limit、code_limit、harness_version 和代码评测的出题方式
     （code_method_of）都等于第一条参照的，即样本设置、出题方式和评测框架版本都相同，才能和参照并排比。
+    same_method 单独给出出题方式是否相同：抽样的行本来就不可比，窗口靠它才知道要不要再标一句"设置与参照不同"。
     official.jsonl 不在 LOG_FILES 里：官方评测不是训练活动，
     不能让它推迟"训练最后一次更新"的时间。窗口只读，这里不创建任何文件。
     """
@@ -268,10 +269,9 @@ def official(run_dir: Path, reference_path: Path | None) -> dict:
     first = reference[0] if reference else None
     rows = []
     for r in latest_per_checkpoint(read_log(run_dir, OFFICIAL_FILE)):
-        same = first is None or (
-            all(r.get(k) == first[k] for k in ("limit", "code_limit", "harness_version")) and code_method_of(r) == first["code_method"]
-        )
-        rows.append({**r, "comparable": same})
+        same_method = first is None or code_method_of(r) == first["code_method"]
+        same = same_method and (first is None or all(r.get(k) == first[k] for k in ("limit", "code_limit", "harness_version")))
+        rows.append({**r, "comparable": same, "same_method": same_method})
     return {"rows": rows, "reference": reference}
 
 

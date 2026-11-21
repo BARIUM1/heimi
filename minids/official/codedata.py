@@ -53,10 +53,15 @@ def load_repobench(path: Path) -> list[dict]:
 
 
 def load_infill(path: Path) -> list[dict]:
+    """读单行填空的题目。每道题的答案必须是以换行结尾的一整行：出题时要把这个换行算到后缀开头
+    （codebench.infill_suffix），格式不对就不能这么做，直接报错。"""
     rows = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         row = json.loads(line)
+        answer = row["canonical_solution"]
+        if not answer.endswith("\n") or "\n" in answer[:-1]:
+            raise ValueError(f"{Path(path).name} 的 {row['task_id']} 不是单行填空的格式：答案应该是以换行结尾的一整行")
         rows.append({k: row[k] for k in _INFILL_FIELDS})
     return rows

@@ -1,7 +1,7 @@
 """参照模型 GPT-2 small：走同一套框架任务和代码评测，进同样的指标名。
 
 transformers 只在 load_gpt2 函数体内 import；GPT-2 没有 FIM 训练，所以只有前缀补全的填空数。
-提示结尾的空白和黑米一样交给模型自己写（规则见 healing.py）。
+提示最后那个空白 token 和黑米一样交给模型自己重写（规则见 healing.py）。
 文本一律用 skip_special_tokens=True 解码，返回值里不会有 <|endoftext|>；
 第一个新 token 就是 EOS 或没生成任何东西时返回空串，计分器照常记为答错。
 """
@@ -15,7 +15,7 @@ import torch
 
 from minids.logging_io import now_iso
 from minids.official.completers import CODE_MAX_NEW_TOKENS
-from minids.official.healing import split_tail, whitespace_tokens, write_tail
+from minids.official.healing import Healer
 from minids.official.results import CODE_METHOD
 from minids.official.run import CODE_LIMIT, code_metrics
 
@@ -37,32 +37,25 @@ def load_gpt2(device: str) -> tuple[object, object, int]:
 def _hf_continuer(hf_model, hf_tok, device: str, max_new_tokens: int) -> Callable[[str], str]:
     """返回 continue_(提示)：贪心生成，返回接在提示后面的文本（不含特殊 token）。
 
-    取提示正文的末尾，新 token 预算最多占上下文一半；提示结尾的空白（tail）由模型在限定的 token 里自己写出来，
-    写 tail 的 token 也算在预算里，预算内写不完时返回空串。解码一律不做空格清理，文本要和 token 一一对得上。
+    取提示末尾，新 token 预算最多占上下文一半。提示的最后一个 token 只是空白时，它由模型重写（healing.py）：
+    不放进提示，第一个新 token 在文字以它开头的 token 里取打分最高的，这个 token 不占预算；
+    模型原样写回同一个 token 时，后面的生成和不做任何处理时一模一样。解码一律不做空格清理，文本要和 token 一一对得上。
     """
     n_positions = hf_model.config.n_positions
     budget = max(1, min(max_new_tokens, n_positions // 2))
-    ws_tokens = whitespace_tokens(hf_tok.decode([i], clean_up_tokenization_spaces=False) for i in range(len(hf_tok)))
+    healer = Healer(hf_tok.decode([i], clean_up_tokenization_spaces=False) for i in range(len(hf_tok)))
 
     @torch.no_grad()
     def continue_(prompt: str) -> str:
-        core, tail = split_tail(prompt)
-        # 提示只有空白时，从文档开头标记写起
-        ids = hf_tok.encode(core)[-(n_positions - budget) :] or [hf_tok.eos_token_id]
-
-        def pick(written: list[int], allowed: list[int]) -> int:
-            logits = hf_model(torch.tensor([ids + written], device=device)).logits[0, -1]
-            return allowed[int(logits.float()[allowed].argmax())]
-
-        new = write_tail(tail, ws_tokens, pick, budget)
-        if new is None:
-            return ""
-        if len(new) < budget:
-            out = hf_model.generate(
-                torch.tensor([ids + new], device=device), max_new_tokens=budget - len(new), do_sample=False, pad_token_id=hf_tok.eos_token_id
-            )
-            new = out[0, len(ids) :].tolist()
-        return hf_tok.decode(new, skip_special_tokens=True, clean_up_tokenization_spaces=False)[len(tail) :]
+        kept, healed, allowed = healer.heal(hf_tok.encode(prompt)[-(n_positions - budget) :])
+        # 提示只有一个空白 token（或干脆是空的）时，从文档开头标记写起
+        kept = kept or [hf_tok.eos_token_id]
+        start = []
+        if healed:
+            logits = hf_model(torch.tensor([kept], device=device)).logits[0, -1]
+            start = [allowed[int(logits.float()[allowed].argmax())]]
+        out = hf_model.generate(torch.tensor([kept + start], device=device), max_new_tokens=budget, do_sample=False, pad_token_id=hf_tok.eos_token_id)
+        return hf_tok.decode(out[0, len(kept) :].tolist(), skip_special_tokens=True, clean_up_tokenization_spaces=False)[len(healed) :]
 
     return continue_
 

@@ -70,6 +70,11 @@ def test_a_rerun_with_the_current_code_prompting_replaces_the_old_record_in_the_
     old = legacy_record("stage0_final.pt", 300, repobench_em=0.03)
     new = asdict(official_record("stage0_final.pt", 300, repobench_em=0.10))
     assert [r["metrics"]["repobench_em"] for r in latest_per_checkpoint([old, new])] == [0.10]
+    # 旧代码后来又补写了一条（没有 code_method）：同样完整，但不是现在的出题方式，不盖掉
+    assert [r["metrics"]["repobench_em"] for r in latest_per_checkpoint([new, old])] == [0.10]
+    # 没跑代码评测的记录不分出题方式：照旧留后写的
+    a, b = legacy_record("stage0_final.pt", 300, code_limit=0, blimp_acc=0.5), asdict(official_record("stage0_final.pt", 300, code_limit=0, blimp_acc=0.6))
+    assert [r["metrics"]["blimp_acc"] for r in latest_per_checkpoint([b, a])] == [0.5]
 
 
 def test_reference_file_round_trips_and_keeps_other_entries(tmp_path):

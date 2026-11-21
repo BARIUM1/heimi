@@ -93,7 +93,7 @@ def test_infill_suffix_takes_the_line_ending_of_the_missing_line():
     # 整篇文本一个字符都没变：提示 + 答案（去掉行末换行）+ 新后缀 == 提示 + 答案 + 原后缀
     assert row["prompt"] + row["canonical_solution"][:-1] + infill_suffix(row) == row["prompt"] + row["canonical_solution"] + row["suffix"]
     assert infill_suffix(dict(row, suffix="")) == "\n"
-    assert infill_suffix(dict(row, canonical_solution="    x = 1")) == "    return x\n"  # 答案不以换行结尾：后缀不动
+    assert infill_suffix({"suffix": "tail"}) == "\ntail"  # 不看答案：答案的格式由读数据的地方检查
 
 
 def test_scoring_nothing_is_an_error():

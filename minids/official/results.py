@@ -10,7 +10,7 @@ from pathlib import Path
 from minids.logging_io import append_jsonl, read_jsonl
 
 OFFICIAL_FILE = "official.jsonl"
-# 代码评测的出题方式。"healed"：提示结尾的空白交给模型自己写（minids/official/healing.py），
+# 代码评测的出题方式。"healed"：提示最后那个空白 token 交给模型自己重写（minids/official/healing.py），
 # 填空题待填那一行行末的换行算在后缀开头。"plain"：2026-11-21 第一次评测用的旧方式（提示原样喂进去），
 # 那时的记录和参照条目里没有 code_method 这一项。两种方式的代码成绩不能放在一起比。
 CODE_METHOD = "healed"
@@ -54,11 +54,12 @@ def completeness(rec: dict) -> tuple[bool, bool]:
 
 
 def latest_per_checkpoint(records: list[dict]) -> list[dict]:
-    """每个检查点只留一条：框架任务全量 > 抽样，其次带代码评测 > 不带，再次后写入的。
-    这样小样本试跑不会盖掉全量结果。结果按 (tokens_total, global_step) 升序。"""
+    """每个检查点只留一条：框架任务全量 > 抽样，其次带代码评测 > 不带，再次代码评测用现在的出题方式 > 旧方式，最后取后写入的。
+    这样小样本试跑不会盖掉全量结果，旧代码后来补写的记录也不会盖掉现在这种出题方式的结果。
+    结果按 (tokens_total, global_step) 升序。"""
     best: dict[str, tuple[tuple, dict]] = {}
     for i, r in enumerate(records):
-        key = (*completeness(r), i)
+        key = (*completeness(r), code_method_of(r) in (None, CODE_METHOD), i)
         cur = best.get(r["checkpoint"])
         if cur is None or key > cur[0]:
             best[r["checkpoint"]] = (key, r)

@@ -103,6 +103,8 @@ class StubGPT2:
 
     def generate(self, input_ids, **kwargs):
         self.generate_kwargs = kwargs
+        if kwargs["max_new_tokens"] < 1:
+            raise ValueError("max_new_tokens must be greater than 0")  # 真的 generate 也这样拒绝
         self.seen.append(input_ids[0].tolist())
         for _ in range(kwargs["max_new_tokens"]):
             t = int(self._next(input_ids).argmax())
@@ -119,19 +121,34 @@ def _stub_hf(script, n_positions=32):
     return StubGPT2(tok.vocab_size, ids, n_positions), StubTok(tok)
 
 
-def test_hf_completers_let_the_model_write_the_trailing_newline_and_return_what_follows_the_prompt():
-    # 模型最想写 "x = 1"，但提示的下一个字符是换行：只能在以换行开头的 token 里挑
+def test_hf_completers_let_the_model_rewrite_the_trailing_newline_and_return_what_follows_the_prompt():
+    # 模型最想写 "x = 1"，但被拿掉的 token 是换行：只能在以换行开头的 token 里挑
     script = [["x = 1", "\n    ", "\n"], ["x = 1"], ["\n"], ["y = 2"], ["\n"], [0]]
     hf_model, hf_tok = _stub_hf(script)
     prompt = "a = 1\n" * 100
     assert hf_next_line(hf_model, hf_tok, "cpu", max_new_tokens=8)(prompt) == "    x = 1\ny = 2\n"
-    tail_less = hf_tok.encode(prompt.rstrip("\n"))[-(32 - 8) :]
-    assert hf_model.seen == [tail_less, tail_less + [hf_tok.tok.id("\n    ")]]  # 先问一次换行怎么写，再从那里接着生成
-    assert hf_model.generate_kwargs["do_sample"] is False and hf_model.generate_kwargs["max_new_tokens"] == 7  # 写换行的 token 算在预算里
+    window = hf_tok.encode(prompt)[-(32 - 8) :]  # 和旧方式截到同一个位置
+    assert hf_model.seen == [window[:-1], window[:-1] + [hf_tok.tok.id("\n    ")]]  # 先问一次换行怎么写，再从那里接着生成
+    assert hf_model.generate_kwargs["do_sample"] is False and hf_model.generate_kwargs["max_new_tokens"] == 8  # 重写的 token 不占预算
 
     hf_model, hf_tok = _stub_hf(script)
     assert hf_infill_prefix(hf_model, hf_tok, "cpu", max_new_tokens=8)("def f():\n", "IGNORED") == "    x = 1"
     assert hf_model.seen[0] == hf_tok.encode("def f():")
+
+
+def test_hf_writing_the_same_token_back_generates_from_the_original_prompt():
+    # 模型把换行原样写回：generate 收到的就是原来的整段提示、原来的预算，和不做任何处理时一样
+    hf_model, hf_tok = _stub_hf([["x = 1", "\n"], ["x = 1"], ["\n"], [0]])
+    prompt = "a = 1\n" * 100
+    assert hf_next_line(hf_model, hf_tok, "cpu", max_new_tokens=8)(prompt) == "x = 1\n"
+    assert hf_model.seen[1] == hf_tok.encode(prompt)[-(32 - 8) :] and hf_model.generate_kwargs["max_new_tokens"] == 8
+
+
+def test_hf_blank_line_token_can_only_be_replaced_by_tokens_that_start_with_it():
+    # 提示以"空一行"这个 token 结尾：单独一个换行、"换行 + 缩进"都对不上
+    hf_model, hf_tok = _stub_hf([["\n", "\n    ", "\n\n"], ["x = 1"], ["\n"], [0]])
+    assert hf_next_line(hf_model, hf_tok, "cpu", max_new_tokens=8)("x = 1\n\n") == "x = 1\n"
+    assert hf_model.seen == [hf_tok.encode("x = 1"), hf_tok.encode("x = 1\n\n")]
 
 
 def test_hf_prompt_without_trailing_whitespace_goes_straight_to_generation():
@@ -147,10 +164,7 @@ def test_hf_completers_never_return_special_tokens_and_survive_empty_output():
         assert make(hf_model, hf_tok)("def f():\n") == ""
 
 
-def test_hf_tail_that_does_not_fit_the_budget_gives_empty_text_and_whitespace_only_prompt_starts_from_eos():
-    hf_model, hf_tok = _stub_hf([["\n"]])
-    assert hf_next_line(hf_model, hf_tok, "cpu", max_new_tokens=2)("x = 1\n\n\n") == ""
-    assert hf_model.generate_kwargs is None  # 两个 token 没写完三个换行：不再往下生成
+def test_hf_prompt_that_is_one_whitespace_token_starts_from_eos():
     hf_model, hf_tok = _stub_hf([["\n"], ["x = 1"], ["\n"], [0]])
     assert hf_next_line(hf_model, hf_tok, "cpu", max_new_tokens=8)("\n") == "x = 1\n"
     assert hf_model.seen[0] == [0]

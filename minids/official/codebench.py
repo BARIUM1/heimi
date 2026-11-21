@@ -80,10 +80,11 @@ def repobench_scores(complete: Callable[[str], str], rows: Sequence[dict]) -> di
 def infill_suffix(row: dict) -> str:
     """交给模型的后缀：待填那一行行末的换行算在后缀开头。
 
-    原数据把这个换行算在答案末尾，后缀从下一行的缩进开始。挪过来以后，后缀和提示一样是在一串空白的起点切开的
-    （原因见 healing.py），整篇文本一个字符都没变。答案不以换行结尾的题不动。
+    原数据把这个换行算在答案末尾，后缀从下一行的缩进开始。挪过来以后，后缀是在一串空白的起点切开的，
+    和模型训练时见到的切法一致（原因见 healing.py），整篇文本一个字符都没变。
+    这里不看答案：每道题的答案都是以换行结尾的一整行，由 codedata.load_infill 在读数据时检查。
     """
-    return "\n" + row["suffix"] if row["canonical_solution"].endswith("\n") else row["suffix"]
+    return "\n" + row["suffix"]
 
 
 def infill_scores(complete: Callable[[str, str], str], rows: Sequence[dict]) -> dict:
