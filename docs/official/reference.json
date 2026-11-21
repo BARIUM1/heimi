@@ -13,12 +13,13 @@
       "wikitext_byte_perplexity": 1.9682003590303168,
       "wikitext_bits_per_byte": 0.9768770917473827,
       "repobench_em": 0.044,
-      "repobench_es": 32.802,
+      "repobench_es": 32.408,
       "repobench_n": 500,
       "infill_em_prefix": 0.026,
       "infill_n": 500
     },
     "harness_version": "0.4.13",
-    "time": "2026-11-21T12:39:01-05:00"
+    "time": "2026-11-21T17:06:03-05:00",
+    "code_method": "healed"
   }
 }
