@@ -77,6 +77,13 @@ def test_a_rerun_with_the_current_code_prompting_replaces_the_old_record_in_the_
     assert [r["metrics"]["blimp_acc"] for r in latest_per_checkpoint([b, a])] == [0.5]
 
 
+def test_a_sampled_current_method_record_does_not_hide_a_full_old_method_one():
+    # 完整程度排在出题方式前面：只做过抽样试跑的新方式记录，不该把全量的旧记录挤出表
+    old_full = legacy_record("stage0_final.pt", 300, repobench_em=0.03)
+    new_sampled = asdict(official_record("stage0_final.pt", 300, limit=20, repobench_em=0.10))
+    assert [r["metrics"]["repobench_em"] for r in latest_per_checkpoint([old_full, new_sampled])] == [0.03]
+
+
 def test_reference_file_round_trips_and_keeps_other_entries(tmp_path):
     p = tmp_path / "docs" / "official" / "reference.json"
     assert load_reference(p) == {}

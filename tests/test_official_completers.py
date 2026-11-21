@@ -83,6 +83,14 @@ def test_a_prompt_without_trailing_whitespace_is_continued_as_is(tmp_path):
     assert heimi_next_line(ScriptedModel([3] + body), real, "cpu", 40)("p") == ""  # 第一个 token 就是控制标记：什么都没写
 
 
+def test_nothing_rewritten_means_exactly_the_budget(tmp_path):
+    # 提示不以空白结尾：没有重写的 token，新 token 正好是预算那么多，一个不多
+    real = tiny_tokenizer(tmp_path)
+    m = ScriptedModel(real.encode("a") * 100, seq_len=32)
+    heimi_next_line(m, real, "cpu")("p")
+    assert m.pos == 16
+
+
 def test_infill_without_trailing_whitespace_matches_the_projects_own_completion(tmp_path):
     # 前缀不以空白结尾时不做任何处理：结果和项目自有评测用的 greedy_line / complete_middle 一样
     real = tiny_tokenizer(tmp_path)
@@ -136,6 +144,16 @@ def test_infill_prefix_mode_ignores_the_suffix(tok):
     m = _model(tok, [["\n    "], ["return a + b"], ["\n"]])
     out = heimi_infill(m, tok, "cpu", "prefix", max_new_tokens=16)("def f(a, b):\n", "SUFFIX")
     assert out == "    return a + b" and m.seen[0] == tok.encode("def f(a, b):")
+
+
+def test_infill_prefix_mode_truncates_and_rewrites_like_next_line(tok):
+    m = _model(tok, [["\n"], ["x = 1"], ["\n"]], seq_len=32)
+    heimi_infill(m, tok, "cpu", "prefix", max_new_tokens=8)("a = 1\n" * 200, "")
+    assert m.seen[0] == tok.encode("a = 1\n" * 200)[-(32 - 8) : -1]  # 和旧方式截到同一个位置，再拿掉最后那个换行
+    # 结尾的空白是两个 token：只重写最后一个
+    m = _model(tok, [["\n    "], ["x = 1"], ["\n"]])
+    assert heimi_infill(m, tok, "cpu", "prefix", 8)("x = 1\n\n\n", "") == "    x = 1"
+    assert m.seen[0] == tok.encode("x = 1\n\n")
 
 
 def test_infill_returns_an_empty_line_when_the_model_starts_with_a_blank_line(tok):
