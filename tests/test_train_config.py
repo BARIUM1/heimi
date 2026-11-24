@@ -30,6 +30,21 @@ def test_baseline_yaml_is_single_stage2_from_scratch():
     assert cfg.stages[0].model == ModelConfig(**STAGE2) and cfg.stages[0].tokens == 2_000_000_000 and cfg.stages[0].lr == 6e-4
 
 
+def test_baseline_task_yaml_appends_the_ladder_task_stage_to_the_baseline():
+    cfg = load_ladder("configs/baseline105m_task.yaml")
+    base = load_ladder("configs/baseline105m.yaml")
+    ladder = load_ladder("configs/ladder.yaml")
+    assert [s.name for s in cfg.stages] == ["baseline", "task"]
+    assert cfg.stages[0] == base.stages[0]  # 已训练完的那一级原样不动：重跑时被跳过，不会重训
+    assert cfg.stages[1] == ladder.stage("task")  # 任务阶段与阶梯的逐项相同，两边的结果才可比
+    assert cfg.steps_for(cfg.stages[1]) == 1335 and cfg.accum_steps(cfg.stages[1]) == 64
+
+    def without_stages(c):
+        return {k: v for k, v in c.to_dict().items() if k != "stages"}
+
+    assert without_stages(cfg) == without_stages(base) == without_stages(ladder)  # 种子、评测、提示等全局项一致
+
+
 def _tiny_dict(**over):
     d = {
         "seed": 1, "seq_len": 32, "tokens_per_step": 256,

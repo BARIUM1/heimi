@@ -1,0 +1,64 @@
+# 对照组 + 任务阶段：在从零训练的 103M 对照组后面接上与阶梯完全相同的 task 级，
+# 用来回答"预训练更好的对照组，做完同样的代码补全训练后是不是也更好"。
+#   python train.py --config configs/baseline105m_task.yaml --run baseline105m
+# baseline 级必须与 baseline105m.yaml 逐项相同：run 目录里已有 baseline_final.pt，这一级会被跳过，
+# task 级从它进入（growth: none，不做增长，优化器重建，与阶梯进入 task 级的做法相同）。
+# task 级必须与 ladder.yaml 的 task 级逐项相同。两条都由 tests/test_train_config.py 检查。
+seed: 1337
+seq_len: 1024
+tokens_per_step: 524288
+log_interval: 10
+ckpt_interval: 500
+keep_checkpoints: 2
+compile: false
+max_mem_frac: 0.8
+
+data:
+  index: data/tokens/index.json
+  tokenizer: data/tokenizer/heimi-16k.json
+  hellaswag: data/eval/hellaswag_val.parquet
+
+eval:
+  interval: 500
+  val_windows: 200
+  hellaswag: true
+  fim_em_samples: 1000
+  sample_interval: 500
+  sample_tokens: 64
+
+model:
+  vocab_size: 16384
+  seq_len: 1024
+
+prompts:
+  - id: en_history
+    prefix: "The history of the Roman Empire began when"
+  - id: en_science
+    prefix: "Water boils at a lower temperature on a mountain because"
+  - id: en_story
+    prefix: "Once upon a time, a small black cat named Heimi"
+  - id: py_func
+    prefix: "def fibonacci(n):\n    \"\"\"Return the n-th Fibonacci number.\"\"\"\n"
+  - id: sh_find
+    prefix: "# list all python files modified in the last day\nfind . -name"
+  - id: fim_py
+    prefix: "def is_even(n):\n    "
+    suffix: "\n\nprint(is_even(4))\n"
+
+stages:
+  - name: baseline
+    growth: none
+    model: {n_layer: 16, d_model: 768, n_head: 12, kv_lora_rank: 256, ffn_hidden: 2048}
+    tokens: 2000000000
+    lr: 6.0e-4
+    warmup_frac: 0.05
+    micro_batch: 8
+    mix: {web: 0.85, code: 0.15, fim_rate: 0.0}
+  - name: task
+    growth: none
+    model: {n_layer: 16, d_model: 768, n_head: 12, kv_lora_rank: 256, ffn_hidden: 2048}
+    tokens: 700000000
+    lr: 2.0e-4
+    warmup_frac: 0.05
+    micro_batch: 8
+    mix: {web: 0.20, code: 0.80, fim_rate: 0.5}
